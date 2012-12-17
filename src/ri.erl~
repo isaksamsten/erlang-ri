@@ -1,0 +1,2 @@
+-module(ri)
+-compile(export_all).
