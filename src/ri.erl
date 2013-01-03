@@ -1,29 +1,21 @@
 -module(ri).
 -compile(export_all).
 
+%%
+%% Initialize the ets-tables (index_vectors and semantic_vectors)
+%%
 init() ->
     ets:new(index_vectors, [public, named_table, {write_concurrency, true}, {read_concurrency, true}]),
     ets:new(semantic_vectors, [public, named_table, {write_concurrency, true}, {read_concurrency, true}]),
     ok.
 
+%%
+%% Destruct the ets-tables
+%%
 stop() ->
     ets:delete(index_vectors),
     ets:delete(semantic_vectors),
     ok.
-
-%%
-%% Run a file
-%%
-run(file, File, Cores, Window, Length, Prob) ->
-    Items = csv:parse(file, File),
-    spawn_runner(Cores, Items, Window, Length, Prob);
-
-%%
-%% Run a list of lists
-%%
-run(list, List, Cores, Window, Length, Prob) ->
-    spawn_runner(Cores, List, Window, Length, Prob).
-
 
 %%
 %% Process that updates an item (concurrently)
@@ -31,8 +23,8 @@ run(list, List, Cores, Window, Length, Prob) ->
 %%
 vector_update_process(Parent) ->
     receive
-	{new, {Items, Window, Length, Prob}} ->
-	    update_item(Items, Window, Length, Prob),
+	{new, {Item, Window, Length, Prob}} ->
+	    update_item(Item, Window, Length, Prob),
 	    vector_update_process(Parent);
 	exit ->
 	    Parent ! {done, self(), Parent}
@@ -42,12 +34,16 @@ vector_update_process(Parent) ->
 %% Spawn a Cores number of "vector_update_process"
 %% that can receive Items for processing
 %%
-spawn_runner(Cores, Items, Window, Length, Prob) ->
+spawn_vector_update_processes(Cores, Items, Window, Length, Prob) ->
     Self = self(),
     Runners = [spawn(?MODULE, vector_update_process, [Self]) || _ <-  lists:seq(1, Cores)],
     run_vector_update_processes(queue:from_list(Runners), Items, Window, Length, Prob),
     wait_for_vector_updates(Self, Cores).
 
+%%
+%% Wait for Cores messages to be sent to Self in the form of: {done,
+%% Pid, Self}
+%%
 wait_for_vector_updates(Self, Cores) ->
     if Cores == 0 ->
 	    ok;
@@ -69,9 +65,18 @@ run_vector_update_processes(Runners, [], _, _, _) ->
 run_vector_update_processes(Runners, [Item|Rest], Window, Length, Prob) ->
     {{value, R}, Queue} = queue:out(Runners),
     R ! {new, {Item, Window, Length, Prob}},
-    run_vector_update_processes(queue:in(R, Queue), Rest, Window, Length, Prob).
-   
+    run_vector_update_processes(queue:in(R, Queue), Rest, Window, Length, Prob);
+run_vector_update_processes(Runners, {csv, Pid} = Items, Window, Length, Prob) ->
+    {{value, R}, Queue} = queue:out(Runners),
+    case csv:get_next_line(Pid) of
+	{ok, Item} ->
+	    R ! {new, {Item, Window, Length, Prob}},
+	    run_vector_update_processes(queue:in(R, Queue), Items, Window, Length, Prob);
+	eof ->
+	    [Process ! exit || Process <- queue:to_list(Runners)]
+    end.
 
+   
 %%
 %% Update Items (a list of Items)
 %%
@@ -95,15 +100,15 @@ update_item(Items, Window, Length, Prob, Queue) ->
     case Items of
 	[] ->
 	    ok;
-	[Item|Rest] ->
-	    update_all(queue:to_list(Queue), Length, Prob, Item),
-	    update_limit({Window, 0}, Rest, Length, Prob, Item),
+	[Pivot|Rest] ->
+	    update_all(queue:to_list(Queue), Length, Prob, Pivot),
+	    update_limit({Window, 0}, Rest, Length, Prob, Pivot),
 	    update_item(Rest, Window, Length, Prob, case queue:len(Queue) >= Window of
 							true->
 							    {_, Old} = queue:out(Queue),
-							    queue:in(Item, Old);
+							    queue:in(Pivot, Old);
 							false ->
-							    queue:in(Item, Queue)
+							    queue:in(Pivot, Queue)
 						    end)
     end.
 
@@ -177,8 +182,8 @@ get_semantic_vector(Item, Length) ->
 get_semantic_vector(Item) ->
     case ets:lookup(semantic_vectors, Item) of
 	[{_, Vector}] ->
-	    Vector;
-	[] -> throw({error, item_not_found})
+	    {ok, Vector};
+	[] -> not_found
     end.
 
 %%
@@ -236,11 +241,7 @@ vector_addition([], _, _) ->
 vector_addition(_, [], _) ->
     throw({not_same_magnitude});
 vector_addition([A|Ar], [B|Br], Acc) ->
-    vector_addition(Ar, Br, [A + if 
-				     B > 0 -> 1;
-				     B < 0 -> -1;
-				     true -> 0						  
-				 end | Acc]).
+    vector_addition(Ar, Br, [A + B | Acc]).
 
 %%
 %% Get the cosine similarity between two vectors
@@ -262,6 +263,51 @@ cosine_similarity([A|Ar], [B|Br], Acc) ->
 %% Compare two semantic vectors
 %%
 compare_items(A, B) ->
-    SemanticVectorA = get_semantic_vector(A),
-    SemanticVectorB = get_semantic_vector(B),
+    {ok, SemanticVectorA} = get_semantic_vector(A),
+    {ok, SemanticVectorB} = get_semantic_vector(B),
     cosine_similarity(SemanticVectorA, SemanticVectorB).
+
+similar_to(A, Threshold) ->
+    case get_semantic_vector(A) of
+	{ok, VectorA} ->
+	    lists:reverse(ets:foldl(fun ({Word, VectorB}, Acc) ->
+					    Similarity = cosine_similarity(VectorA, VectorB),
+					    if Similarity > Threshold, A /= Word ->
+						    ordsets:add_element({Similarity, Word}, Acc);
+					       true ->
+						    Acc
+					    end
+				    end, ordsets:new(), semantic_vectors));
+	not_found ->
+	    not_found
+    end.
+
+			 
+		      
+
+%%
+%% Run a file
+%%
+run(file, File, Cores, Window, Length, Prob) ->
+    io:format(standard_error, "*** Running '~p' on ~p core(s) *** ~n", [File, Cores]),
+    Then = now(),
+    Items = csv:parse(file, File),
+    io:format("Reading file took: ~p ~n", [timer:now_diff(now(), Then) / 1000000]),
+    run_experiment(Items, Cores, Window, Length, Prob);
+
+run(incremental, File, Cores, Window, Length, Prob) ->
+    io:format(standard_error, "*** Running '~p' on ~p core(s) *** ~n", [File, Cores]),
+    Pid = spawn_link(csv, spawn_parser, [File]),
+    run_experiment({csv, Pid}, Cores, Window, Length, Prob).
+    
+
+%%
+%% Run a list of lists
+%%
+run_experiment(Items, Cores, Window, Length, Prob) ->
+    catch stop(),
+    init(),
+    Then = now(),
+    spawn_vector_update_processes(Cores, Items, Window, Length, Prob),
+    io:format(standard_error, "Updating vectors took: ~p ~n", [timer:now_diff(erlang:now(), Then) / 1000000]).
+

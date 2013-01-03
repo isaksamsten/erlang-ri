@@ -30,11 +30,45 @@ parse(call, Io, {Id, Fun}) ->
 	    Fun(Id, parse_line(Line, [])),
 	    parse(call, Io, {Id + 1, Fun});
 	eof ->
+	    Fun(eof, []),
 	    ok;
 	{error, Reason} ->
 	    throw({error, Reason})
     end.
 
+spawn_parser(File) ->
+    case file:open(File, [raw, read]) of
+	{ok, Io} ->
+	    parse_incremental(Io);
+	_ ->
+	    throw({error, file_not_found})
+    end.
+
+parse_incremental(Io) ->
+    receive
+	{more, Parent} ->
+	    case file:read_line(Io) of
+		{ok, Line} ->
+		    Item = parse_line(Line, []),
+		    Parent ! {ok, Parent, Item},
+		    parse_incremental(Io);
+		eof ->
+		    Parent ! {eof, Parent};
+		{error, Reason} ->
+		    throw({error, Reason})
+	    end
+    end.
+
+get_next_line(Pid) ->
+    Self = self(),
+    Pid ! {more, Self},
+    receive
+	{ok, Self, Item} ->
+	    {ok, Item};
+	{eof, Self} ->
+	    eof
+    end.
+	    
 
 parse_line(Line, Acc) ->
     lists:reverse(parse_line(Line, [], Acc)).
