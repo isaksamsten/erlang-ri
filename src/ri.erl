@@ -145,8 +145,8 @@ update_limit({Limit, Current}, Items, Length, Prob, Pivot) ->
 %% does not exist, create it
 %% 
 update_pivot(Pivot, Item, Length, Prob) ->
-    PivotVector = get_semantic_vector(Item, Length),
-    ItemVector  = get_index_vector(Pivot, Length, Prob),
+    PivotVector = get_semantic_vector(Pivot, Length),
+    ItemVector  = get_index_vector(Item, Length, Prob),
     ets:insert(semantic_vectors, {Pivot, vector_addition(PivotVector, ItemVector)}).
 
 %%
