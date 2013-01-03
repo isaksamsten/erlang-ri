@@ -295,6 +295,9 @@ compare_items(A, B) ->
     {ok, SemanticVectorB} = get_semantic_vector(B),
     cosine_similarity(tuple_to_list(SemanticVectorA), tuple_to_list(SemanticVectorB)).
 
+%%
+%% Get items similar to A
+%%
 similar_to(A, Threshold) ->
     case get_semantic_vector(A) of
 	{ok, VectorA} ->
