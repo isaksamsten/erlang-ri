@@ -158,7 +158,7 @@ get_index_vector(Item, Length, Prob) ->
 	[{_, Vector}] ->
 	    Vector;
 	[] ->
-	    Vector = new_index_vector2(Length, Prob, 0),
+	    Vector = new_index_vector(Length, Prob, 0),
 	    ets:insert(index_vectors, {Item, Vector}),
 	    Vector
     end.
@@ -193,41 +193,8 @@ new_semantic_vector(Length) ->
     [0 || _ <- lists:seq(1, Length)].
     
 %%
-%% Create new index vectors for Items in List
+%% Generate an index vector
 %%
-new_index_vectors(List, Length, Prob) ->
-    case List of
-	[] ->
-	    ok;
-	[Item|Rest] ->
-	    ets:insert(index_vectors, {Item, new_index_vector(Length, Prob)}),
-	    new_index_vectors(Rest, Length, Prob)
-    end.
-
-%%
-%% Create a new index vector of length Length
-%%
-new_index_vector(Length, Prob) ->
-    new_index_vector(Length, Prob, []).
-
-new_index_vector(0, _, Acc) ->
-    lists:reverse(Acc);
-new_index_vector(Length, Prob, Acc) ->
-    new_index_vector(Length - 1, Prob, [random_index(Prob) | Acc]).
-
-%%
-%% Return -1, 1 or 0
-%%
-random_index(Prob) ->
-    X = random:uniform(),
-    if
-       X >= 1 - Prob ->
-	    1;
-       X =< Prob ->
-	    -1;
-       true -> 0
-    end.
-
 generate_index_vector(_, 0, Sets) ->
     sets:to_list(Sets);
 generate_index_vector(Length, Set, Sets) ->
@@ -243,7 +210,7 @@ generate_index_vector(Length, Set, Sets) ->
 		    generate_index_vector(Length, Set - 1, sets:add_element({Index, -1}, Sets))
 	    end
     end.
-new_index_vector2(Length, Values, Variance) ->
+new_index_vector(Length, Values, Variance) ->
     Set = round(Values + (random:uniform() * Variance * case random:uniform() of
 							    X when X > 0.5 ->
 								1;
