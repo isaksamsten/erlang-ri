@@ -146,8 +146,8 @@ update_limit({Limit, Current}, Items, Length, Prob, Pivot) ->
 %% 
 update_pivot(Pivot, Item, Length, Prob) ->
     PivotVector = get_semantic_vector(Pivot, Length),
-    ItemVector  = get_index_vector(Item, Length, Prob),
-    ets:insert(semantic_vectors, {Pivot, vector_addition(PivotVector, ItemVector)}).
+    IndexVector  = get_index_vector(Item, Length, Prob),
+    ets:insert(semantic_vectors, {Pivot, add_vectors(PivotVector, IndexVector)}).
 
 %%
 %% Init a random vector of Length lenght and the Prob prob to
@@ -158,7 +158,7 @@ get_index_vector(Item, Length, Prob) ->
 	[{_, Vector}] ->
 	    Vector;
 	[] ->
-	    Vector = new_index_vector(Length, Prob),
+	    Vector = new_index_vector2(Length, Prob, 0),
 	    ets:insert(index_vectors, {Item, Vector}),
 	    Vector
     end.
@@ -171,7 +171,7 @@ get_semantic_vector(Item, Length) ->
 	[{_, Vector}] ->
 	    Vector;
 	[] ->
-	    Vector = new_semantic_vector(Length),
+	    Vector = list_to_tuple(new_semantic_vector(Length)),
 	    ets:insert(semantic_vectors, {Item, Vector}),
 	    Vector
     end.
@@ -228,6 +228,35 @@ random_index(Prob) ->
        true -> 0
     end.
 
+generate_index_vector(_, 0, Sets) ->
+    sets:to_list(Sets);
+generate_index_vector(Length, Set, Sets) ->
+    Index = random:uniform(Length),
+    case sets:is_element(Index, Sets) of
+	true ->
+	    generate_index_vector(Length, Set, Sets);
+	false ->
+	    case random:uniform() of
+		X when X > 0.5 ->
+		    generate_index_vector(Length, Set - 1, sets:add_element({Index, 1}, Sets));
+		_ ->
+		    generate_index_vector(Length, Set - 1, sets:add_element({Index, -1}, Sets))
+	    end
+    end.
+new_index_vector2(Length, Values, Variance) ->
+    Set = round(Values + (random:uniform() * Variance * case random:uniform() of
+							    X when X > 0.5 ->
+								1;
+							    _ -> -1
+							end)),
+    generate_index_vector(Length, Set, sets:new()).
+
+add_vectors(Tuple, []) ->
+    Tuple;
+add_vectors(Tuple, [{Index, Value}|Rest]) ->
+    add_vectors(setelement(Index, Tuple, element(Index, Tuple) + Value), Rest).
+    
+
 %%
 %% Add two vectors
 %%
@@ -257,21 +286,20 @@ cosine_similarity([A|Ar], [B|Br], Acc) ->
     NewLenA = LenA + A * A,
     NewLenB = LenB + B * B,
     cosine_similarity(Ar, Br, {NewDot, NewLenA, NewLenB}).
-
-
+ 
 %%
 %% Compare two semantic vectors
 %%
 compare_items(A, B) ->
     {ok, SemanticVectorA} = get_semantic_vector(A),
     {ok, SemanticVectorB} = get_semantic_vector(B),
-    cosine_similarity(SemanticVectorA, SemanticVectorB).
+    cosine_similarity(tuple_to_list(SemanticVectorA), tuple_to_list(SemanticVectorB)).
 
 similar_to(A, Threshold) ->
     case get_semantic_vector(A) of
 	{ok, VectorA} ->
 	    lists:reverse(ets:foldl(fun ({Word, VectorB}, Acc) ->
-					    Similarity = cosine_similarity(VectorA, VectorB),
+					    Similarity = cosine_similarity(tuple_to_list(VectorA), tuple_to_list(VectorB)),
 					    if Similarity > Threshold, A /= Word ->
 						    ordsets:add_element({Similarity, Word}, Acc);
 					       true ->
