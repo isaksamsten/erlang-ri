@@ -37,8 +37,12 @@ update(Key, Exist, DontExist) ->
 				       mnesia:write(#data{key=Key, value=New})
 			       end
 		       end).
-									 
-			       
-    
+
+iterate(Function, Acc) ->			       
+    {_, R} = mnesia:transaction(fun() -> mnesia:foldl(fun (#data{key=Key, value=Value}, Acc0) ->
+							      Function({Key, Value}, Acc0)
+						      end, Acc, data) end),
+    R.
+
     
     
