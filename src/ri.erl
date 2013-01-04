@@ -24,7 +24,7 @@ stop() ->
 vector_update_process(Parent) ->
     receive
 	{new, {Item, Window, Length, Prob}} ->
-	    update_item(Item, Window, Length, Prob),
+	    update_item(Parent, Item, Window, Length, Prob),
 	    vector_update_process(Parent);
 	exit ->
 	    Parent ! {done, self(), Parent}
@@ -51,6 +51,9 @@ wait_for_vector_updates(Self, Cores) ->
 	    receive
 		{done, _, Self} ->
 		    wait_for_vector_updates(Self, Cores - 1);
+		{update, _Pid, Self, {Pivot, Item, Length, Prob}} ->
+		    update_pivot(Pivot, Item, Length, Prob),
+		    wait_for_vector_updates(Self, Cores);
 		_ -> throw({error, some_error})
 	    end
     end.
@@ -80,13 +83,13 @@ run_vector_update_processes(Runners, {csv, Pid} = Items, Window, Length, Prob) -
 %%
 %% Update Items (a list of Items)
 %%
-update(Items, Window, Length, Prob) ->
+update(Parent, Items, Window, Length, Prob) ->
     case Items of
 	[] ->
 	    ok;
 	[Item|Rest] ->
-	    update_item(Item, Window, Length, Prob),
-	    update(Rest, Window, Length, Prob)
+	    update_item(Parent, Item, Window, Length, Prob),
+	    update(Parent, Rest, Window, Length, Prob)
     end.
 
 
@@ -94,60 +97,78 @@ update(Items, Window, Length, Prob) ->
 %% Update an item, using a window length of Window
 %% a random index vector or Length
 %%
-update_item(Items, Window, Length, Prob) ->
-    update_item(Items, Window, Length, Prob, queue:new()).
-update_item(Items, Window, Length, Prob, Queue) ->
+update_item(Parent, Items, Window, Length, Prob) ->
+    update_item(Parent, Items, Window, Length, Prob, queue:new()).
+update_item(Parent, Items, Window, Length, Prob, Queue) ->
     case Items of
 	[] ->
 	    ok;
 	[Pivot|Rest] ->
-	    update_all(queue:to_list(Queue), Length, Prob, Pivot),
-	    update_limit({Window, 0}, Rest, Length, Prob, Pivot),
-	    update_item(Rest, Window, Length, Prob, case queue:len(Queue) >= Window of
-							true->
-							    {_, Old} = queue:out(Queue),
-							    queue:in(Pivot, Old);
-							false ->
-							    queue:in(Pivot, Queue)
-						    end)
+	    update_all(Parent, queue:to_list(Queue), Length, Prob, Pivot),
+	    update_limit(Parent, {Window, 0}, Rest, Length, Prob, Pivot),
+	    update_item(Parent, Rest, Window, Length, Prob, case queue:len(Queue) >= Window of
+								true->
+								    {_, Old} = queue:out(Queue),
+								    queue:in(Pivot, Old);
+								false ->
+								    queue:in(Pivot, Queue)
+							    end)
     end.
 
 %%
 %% Update Pivot with all items in Items
 %%
-update_all(Items, Length, Prob, Pivot) ->
+update_all(Parent, Items, Length, Prob, Pivot) ->
     case Items of
 	[] ->
 	    ok;
 	[Item|Rest] ->
-	    update_pivot(Pivot, Item, Length, Prob),
-	    update_all(Rest, Length, Prob, Pivot)
+	    %Parent ! {update, self(), Parent, {Pivot, Item, Length, Prob}},
+	    update_pivot_transaction(Pivot, Item, Length, Prob),
+	    update_all(Parent, Rest, Length, Prob, Pivot)
     end.
 
 %% 
 %% Update Pivot with Current to Limit number of items
 %%
-update_limit({Limit, Current}, Items, Length, Prob, Pivot) ->
+update_limit(Parent, {Limit, Current}, Items, Length, Prob, Pivot) ->
     case Items of
 	[] ->
 	    ok;
 	[Item|Rest] ->
 	    if Limit > Current ->
-		    update_pivot(Pivot, Item, Length, Prob),
-		    update_limit({Limit, Current + 1}, Rest, Length, Prob, Pivot);
+		    %Parent ! {update, self(), Parent, {Pivot, Item, Length, Prob}},
+		    update_pivot_transaction(Pivot, Item, Length, Prob),
+		    update_limit(Parent, {Limit, Current + 1}, Rest, Length, Prob, Pivot);
 	       true ->
 		    ok
 	    end
     end.
 
 %%
-%% Update Pivot w.r.t Item. If index vector for any of the two
-%% does not exist, create it
-%% 
+%% Update Pivot (semantic vector) w.r.t. Item (index vector), do this in current thread.
+%%
 update_pivot(Pivot, Item, Length, Prob) ->
     PivotVector = get_semantic_vector(Pivot, Length),
     IndexVector  = get_index_vector(Item, Length, Prob),
-    ets:insert(semantic_vectors, {Pivot, add_vectors(PivotVector, IndexVector)}).
+    ets:insert(semantic_vectors, {Pivot, add_vectors2(PivotVector, IndexVector)}).
+
+%%
+%% Update Pivot w.r.t Item. If index vector for any of the two
+%% does not exist, create it. Do this in a transaction (mnesia)
+%% 
+update_pivot_transaction(Pivot, Item, Length, Prob) ->
+    IndexVector  = get_index_vector(Item, Length, Prob),
+    db:update(Pivot, 
+	      fun (PivotVector) ->
+		      add_vectors2(PivotVector, IndexVector)
+	      end, 
+	      fun () ->
+		      PivotVector = new_semantic_vector(Length),
+		      add_vectors2(PivotVector, IndexVector)
+	      end).
+
+
 
 %%
 %% Init a random vector of Length lenght and the Prob prob to
@@ -171,17 +192,25 @@ get_semantic_vector(Item, Length) ->
 	[{_, Vector}] ->
 	    Vector;
 	[] ->
-	    Vector = list_to_tuple(new_semantic_vector(Length)),
+	    Vector = new_semantic_vector(Length),
 	    ets:insert(semantic_vectors, {Item, Vector}),
 	    Vector
+    end.
+
+get_semantic_vector_ets(Item) ->
+    case ets:lookup(semantic_vectors, Item) of
+	[{_, Vector}] ->
+	    {ok, Vector};
+	[] ->
+	    not_found
     end.
 
 %%
 %% Get semantic vector for item
 %%
 get_semantic_vector(Item) ->
-    case ets:lookup(semantic_vectors, Item) of
-	[{_, Vector}] ->
+    case db:lookup(Item) of
+	{ok, Vector} ->
 	    {ok, Vector};
 	[] -> not_found
     end.
@@ -189,8 +218,8 @@ get_semantic_vector(Item) ->
 %%
 %% Create a new semantic vector
 %%
-new_semantic_vector(Length) ->   
-    [0 || _ <- lists:seq(1, Length)].
+new_semantic_vector(_Length) ->   
+    dict:new().
     
 %%
 %% Generate an index vector
@@ -218,49 +247,42 @@ new_index_vector(Length, Values, Variance) ->
 							end)),
     generate_index_vector(Length, Set, sets:new()).
 
-add_vectors(Tuple, []) ->
-    Tuple;
-add_vectors(Tuple, [{Index, Value}|Rest]) ->
-    add_vectors(setelement(Index, Tuple, element(Index, Tuple) + Value), Rest).
+%%
+%% VectorA -> {Length, dict() -> {Index, Value}}
+%%
+add_vectors2(VectorA, VectorB) ->
+    lists:foldl(fun ({Index, Value}, Acc) ->
+			dict:update(Index, fun (Old) ->
+						   Old + Value
+					   end, Value, Acc)
+		end, VectorA, VectorB).
+			
     
+cosine(A, B) ->
+    NewDot = dict:fold(fun (Index, ValueA, Dot) ->
+			  case dict:find(Index, B) of
+			      {ok, ValueB} ->
+				  Dot + (ValueA * ValueB);
+			      error ->
+				  Dot
+			  end
+		       end, 0, A),
+    LenA = magnitude(A),
+    LenB = magnitude(B),
+    NewDot / (LenA * LenB).
 
-%%
-%% Add two vectors
-%%
-vector_addition(A, B) ->
-    vector_addition(A, B, []).
-
-vector_addition([], [], Acc) ->
-    lists:reverse(Acc);
-vector_addition([], _, _) ->
-    throw({not_same_magnitude});
-vector_addition(_, [], _) ->
-    throw({not_same_magnitude});
-vector_addition([A|Ar], [B|Br], Acc) ->
-    vector_addition(Ar, Br, [A + B | Acc]).
-
-%%
-%% Get the cosine similarity between two vectors
-%%
-cosine_similarity(A, B) ->
-    cosine_similarity(A, B, {0, 0, 0}).
-
-cosine_similarity([], [], {Dot, A, B}) ->
-    Dot / (math:sqrt(A) * math:sqrt(B));
-cosine_similarity([A|Ar], [B|Br], Acc) ->
-    {Dot, LenA, LenB} = Acc,
-    NewDot = Dot + (A * B),
-    NewLenA = LenA + A * A,
-    NewLenB = LenB + B * B,
-    cosine_similarity(Ar, Br, {NewDot, NewLenA, NewLenB}).
+magnitude(Vector) ->		      
+    math:sqrt(dict:fold(fun (_, Value, Acc) ->
+				Acc + (Value * Value)
+			end, 0, Vector)).
  
 %%
 %% Compare two semantic vectors
 %%
-compare_items(A, B) ->
-    {ok, SemanticVectorA} = get_semantic_vector(A),
-    {ok, SemanticVectorB} = get_semantic_vector(B),
-    cosine_similarity(tuple_to_list(SemanticVectorA), tuple_to_list(SemanticVectorB)).
+similarity(A, B) ->
+    {ok, SemanticVectorA} = get_semantic_vector_ets(A),
+    {ok, SemanticVectorB} = get_semantic_vector_ets(B),
+    cosine(SemanticVectorA,SemanticVectorB).
 
 %%
 %% Get items similar to A
@@ -269,7 +291,7 @@ similar_to(A, Threshold) ->
     case get_semantic_vector(A) of
 	{ok, VectorA} ->
 	    lists:reverse(ets:foldl(fun ({Word, VectorB}, Acc) ->
-					    Similarity = cosine_similarity(tuple_to_list(VectorA), tuple_to_list(VectorB)),
+					    Similarity = cosine(tuple_to_list(VectorA), tuple_to_list(VectorB)),
 					    if Similarity > Threshold, A /= Word ->
 						    ordsets:add_element({Similarity, Word}, Acc);
 					       true ->
