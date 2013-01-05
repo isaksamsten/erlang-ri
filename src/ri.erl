@@ -34,7 +34,7 @@ vector_update_process(Parent, Result) ->
 %%
 spawn_vector_update_processes(Cores, Items, Window, Length, Prob) ->
     Self = self(),
-    Runners = [spawn(?MODULE, vector_update_process, [Self, dict:new()]) || _ <-  lists:seq(1, Cores)],
+    Runners = [spawn_link(?MODULE, vector_update_process, [Self, dict:new()]) || _ <-  lists:seq(1, Cores)],
     run_vector_update_processes(queue:from_list(Runners), Items, Window, Length, Prob),
     wait_for_vector_updates(Self, Cores, dict:new()).
 
@@ -47,10 +47,14 @@ wait_for_vector_updates(Self, Cores, Result) ->
 	    Result;
        true ->
 	    receive
-		{done, _, Self, Dict} ->
-		    wait_for_vector_updates(Self, Cores - 1, dict:merge(fun (_, A, B) ->
-										merge_semantic_vector(A, B)
-									end, Result, Dict));
+		{done, Pid, Self, Dict} ->
+		    Then = now(),
+		    Result0 = dict:merge(fun (_, A, B) ->
+						 merge_semantic_vector(A, B)
+					 end, Result, Dict),
+		    io:format(standard_error, "Merging vectors from ~p in ~p second(s) ~n", 
+			      [Pid, timer:now_diff(erlang:now(), Then) / 1000000]),
+		    wait_for_vector_updates(Self, Cores - 1, Result0);
 		_ -> throw({error, some_error})
 	    end
     end.
@@ -152,23 +156,6 @@ update_pivot(Result, Pivot, Item, Length, Prob) ->
 		       end, new_semantic_vector(Length), Result).
 
 %%
-%% Update Pivot w.r.t Item. If index vector for any of the two
-%% does not exist, create it. Do this in a transaction (mnesia)
-%% 
-update_pivot_transaction(Pivot, Item, Length, Prob) ->
-    IndexVector  = get_index_vector(Item, Length, Prob),
-    db:update(Pivot, 
-	      fun (PivotVector) ->
-		      add_vectors(PivotVector, IndexVector)
-	      end, 
-	      fun () ->
-		      PivotVector = new_semantic_vector(Length),
-		      add_vectors(PivotVector, IndexVector)
-	      end).
-
-
-
-%%
 %% Init a random vector of Length lenght and the Prob prob to
 %% spawn -1 or 1
 %%
@@ -188,16 +175,6 @@ get_semantic_vector(Item, Vectors) ->
 	    Vector;
 	error ->
 	    not_found
-    end.
-
-%%
-%% Get semantic vector for item
-%%
-get_semantic_vector(Item) ->
-    case db:lookup(Item) of
-	{ok, Vector} ->
-	    {ok, Vector};
-	[] -> not_found
     end.
 
 %%
@@ -244,27 +221,17 @@ add_vectors(VectorA, VectorB) ->
 		end, VectorA, VectorB).
 
 cosine(A, B) ->
-    NewDot = dict:fold(fun (Index, ValueA, Dot) ->
-			  case dict:find(Index, B) of
-			      {ok, ValueB} ->
-				  Dot + (ValueA * ValueB);
-			      error ->
-				  Dot
-			  end
-		       end, 0, A),
-    LenA = magnitude(A),
-    LenB = magnitude(B),
-    NewDot / (LenA * LenB).
+    dot_product(A, B) / (magnitude(A) * magnitude(B)).
 
 dot_product(A, B) ->
-    NewDot = dict:fold(fun (Index, ValueA, Dot) ->
-			  case dict:find(Index, B) of
-			      {ok, ValueB} ->
-				  Dot + (ValueA * ValueB);
-			      error ->
-				  Dot
-			  end
-		       end, 0, A).
+    dict:fold(fun (Index, ValueA, Dot) ->
+		      case dict:find(Index, B) of
+			  {ok, ValueB} ->
+			      Dot + (ValueA * ValueB);
+			  error ->
+			      Dot
+		      end
+	      end, 0, A).
 
 magnitude(Vector) ->		      
     math:sqrt(dict:fold(fun (_, Value, Acc) ->
@@ -282,8 +249,8 @@ similarity(A, B, Vectors) ->
 %%
 %% Get items similar to A
 %%
-similar_to(A, Min, Max) ->
-    case get_semantic_vector(A) of
+similar_to(A, Min, Max, Vectors) ->
+    case get_semantic_vector(A, Vectors) of
 	{ok, VectorA} ->
 	    lists:reverse(db:iterate(fun ({Word, VectorB}, Acc) ->
 					     Similarity = cosine(VectorA, VectorB),
@@ -324,7 +291,7 @@ run_experiment(Items, Cores, Window, Length, Prob) ->
     init(),
     Then = now(),
     Result = spawn_vector_update_processes(Cores, Items, Window, Length, Prob),
-    io:format(standard_error, "Updating vectors took: ~p ~n", [timer:now_diff(erlang:now(), Then) / 1000000]),
+    io:format(standard_error, "Updating vectors took: ~p ~n", [timer:now_diff(now(), Then) / 1000000]),
     Result.
 
 test() ->
