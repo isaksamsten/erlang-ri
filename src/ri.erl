@@ -6,8 +6,6 @@
 %%
 init() ->
     ets:new(index_vectors, [public, named_table, {write_concurrency, true}, {read_concurrency, true}]),
-    ets:new(semantic_vectors, [public, named_table, {write_concurrency, true}, {read_concurrency, true}]),
-    db:init(),
     ok.
 
 %%
@@ -15,8 +13,6 @@ init() ->
 %%
 stop() ->
     ets:delete(index_vectors),
-    ets:delete(semantic_vectors),
-    db:clear(),
     ok.
 
 %%
@@ -40,7 +36,7 @@ spawn_vector_update_processes(Cores, Items, Window, Length, Prob) ->
     Self = self(),
     Runners = [spawn(?MODULE, vector_update_process, [Self, dict:new()]) || _ <-  lists:seq(1, Cores)],
     run_vector_update_processes(queue:from_list(Runners), Items, Window, Length, Prob),
-    wait_for_vector_updates(Self, Cores, []).
+    wait_for_vector_updates(Self, Cores, dict:new()).
 
 %%
 %% Wait for Cores messages to be sent to Self in the form of: {done,
@@ -52,10 +48,9 @@ wait_for_vector_updates(Self, Cores, Result) ->
        true ->
 	    receive
 		{done, _, Self, Dict} ->
-		    wait_for_vector_updates(Self, Cores - 1, [Dict|Result]);
-		{update, _Pid, Self, {Pivot, Item, Length, Prob}} ->
-		    update_pivot(Pivot, Item, Length, Prob),
-		    wait_for_vector_updates(Self, Cores, Result);
+		    wait_for_vector_updates(Self, Cores - 1, dict:merge(fun (_, A, B) ->
+										merge_semantic_vector(A, B)
+									end, Result, Dict));
 		_ -> throw({error, some_error})
 	    end
     end.
@@ -126,8 +121,8 @@ update_all(Result, Items, Length, Prob, Pivot) ->
 	    Result;
 	[Item|Rest] ->
 	    %Parent ! {update, self(), Parent, {Pivot, Item, Length, Prob}},
-	    update_all(dict:store(Pivot, update_pivot(Pivot, Item, Length, Prob), Result),
-		       Rest, Length, Prob, Pivot)
+	    Result0 = update_pivot(Result, Pivot, Item, Length, Prob),
+	    update_all(Result0, Rest, Length, Prob, Pivot)
     end.
 
 %% 
@@ -139,9 +134,9 @@ update_limit(Result, {Limit, Current}, Items, Length, Prob, Pivot) ->
 	    Result;
 	[Item|Rest] ->
 	    if Limit > Current ->
-		    %Parent ! {update, self(), Parent, {Pivot, Item, Length, Prob}},		    
-		    update_limit(dict:store(Pivot, update_pivot(Pivot, Item, Length, Prob), Result), 
-				 {Limit, Current + 1}, Rest, Length, Prob, Pivot);
+		    %Parent ! {update, self(), Parent, {Pivot, Item, Length, Prob}},
+		    Result0 = update_pivot(Result, Pivot, Item, Length, Prob),
+		    update_limit(Result0, {Limit, Current + 1}, Rest, Length, Prob, Pivot);
 	       true ->
 		    Result
 	    end
@@ -150,10 +145,11 @@ update_limit(Result, {Limit, Current}, Items, Length, Prob, Pivot) ->
 %%
 %% Update Pivot (semantic vector) w.r.t. Item (index vector), do this in current thread.
 %%
-update_pivot(Pivot, Item, Length, Prob) ->
-    PivotVector = get_semantic_vector(Pivot, Length),
+update_pivot(Result, Pivot, Item, Length, Prob) ->
     IndexVector  = get_index_vector(Item, Length, Prob),
-    add_vectors(PivotVector, IndexVector).
+    dict:update(Pivot, fun(PivotVector) ->
+			       add_vectors(PivotVector, IndexVector)
+		       end, new_semantic_vector(Length), Result).
 
 %%
 %% Update Pivot w.r.t Item. If index vector for any of the two
@@ -186,24 +182,11 @@ get_index_vector(Item, Length, Prob) ->
 	    Vector
     end.
 
-%%
-%% Get the semantic vector for Item (if dont exist, create)
-%%
-get_semantic_vector(Item, Length) ->
-    case ets:lookup(semantic_vectors, Item) of
-	[{_, Vector}] ->
+get_semantic_vector(Item, Vectors) ->
+    case dict:find(Item, Vectors) of
+	{ok, Vector} ->
 	    Vector;
-	[] ->
-	    Vector = new_semantic_vector(Length),
-	    ets:insert(semantic_vectors, {Item, Vector}),
-	    Vector
-    end.
-
-get_semantic_vector_ets(Item) ->
-    case ets:lookup(semantic_vectors, Item) of
-	[{_, Vector}] ->
-	    {ok, Vector};
-	[] ->
+	error ->
 	    not_found
     end.
 
@@ -241,6 +224,7 @@ generate_index_vector(Length, Set, Sets) ->
 		    generate_index_vector(Length, Set - 1, sets:add_element({Index, -1}, Sets))
 	    end
     end.
+
 new_index_vector(Length, Values, Variance) ->
     Set = round(Values + (random:uniform() * Variance * case random:uniform() of
 							    X when X > 0.5 ->
@@ -258,8 +242,7 @@ add_vectors(VectorA, VectorB) ->
 						   Old + Value
 					   end, Value, Acc)
 		end, VectorA, VectorB).
-			
-    
+
 cosine(A, B) ->
     NewDot = dict:fold(fun (Index, ValueA, Dot) ->
 			  case dict:find(Index, B) of
@@ -273,6 +256,16 @@ cosine(A, B) ->
     LenB = magnitude(B),
     NewDot / (LenA * LenB).
 
+dot_product(A, B) ->
+    NewDot = dict:fold(fun (Index, ValueA, Dot) ->
+			  case dict:find(Index, B) of
+			      {ok, ValueB} ->
+				  Dot + (ValueA * ValueB);
+			      error ->
+				  Dot
+			  end
+		       end, 0, A).
+
 magnitude(Vector) ->		      
     math:sqrt(dict:fold(fun (_, Value, Acc) ->
 				Acc + (Value * Value)
@@ -281,9 +274,9 @@ magnitude(Vector) ->
 %%
 %% Compare two semantic vectors
 %%
-similarity(A, B) ->
-    {ok, SemanticVectorA} = get_semantic_vector_ets(A),
-    {ok, SemanticVectorB} = get_semantic_vector_ets(B),
+similarity(A, B, Vectors) ->
+    SemanticVectorA = get_semantic_vector(A, Vectors),
+    SemanticVectorB = get_semantic_vector(B, Vectors),
     cosine(SemanticVectorA,SemanticVectorB).
 
 %%
@@ -332,16 +325,16 @@ run_experiment(Items, Cores, Window, Length, Prob) ->
     Then = now(),
     Result = spawn_vector_update_processes(Cores, Items, Window, Length, Prob),
     io:format(standard_error, "Updating vectors took: ~p ~n", [timer:now_diff(erlang:now(), Then) / 1000000]),
-    merge_semantic_vectors(Result).
+    Result.
 
 test() ->
     Vector0 = new_semantic_vector(1000),
-    Vector1 = new_semantic_vector(1000),
-    Vector2 = new_semantic_vector(1000),
+    _Vector1 = new_semantic_vector(1000),
+    _Vector2 = new_semantic_vector(1000),
 
     Index0 = new_index_vector(1000, 7, 0),
     Index1 = new_index_vector(1000, 7, 0),
-    Index2 = new_index_vector(1000, 7, 0),
+    _Index2 = new_index_vector(1000, 7, 0),
 
     Vi0 = add_vectors(Vector0, Index0),
     Vi1 = add_vectors(Vi0, Index1),
@@ -361,7 +354,7 @@ merge_semantic_vectors([Head|Rest]) ->
 		end, Head, Rest).
 
 merge_semantic_vector(VectorA, VectorB) ->
-    dict:merge(fun (Key, ValueA, ValueB) ->
+    dict:merge(fun (_Key, ValueA, ValueB) ->
 		       ValueA + ValueB
 	       end, VectorA, VectorB).
 
