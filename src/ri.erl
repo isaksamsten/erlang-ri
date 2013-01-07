@@ -172,7 +172,7 @@ get_index_vector(Item, Length, Prob) ->
 get_semantic_vector(Item, Vectors) ->
     case dict:find(Item, Vectors) of
 	{ok, Vector} ->
-	    Vector;
+	    {ok, Vector};
 	error ->
 	    not_found
     end.
@@ -221,7 +221,16 @@ add_vectors(VectorA, VectorB) ->
 		end, VectorA, VectorB).
 
 cosine(A, B) ->
-    dot_product(A, B) / (magnitude(A) * magnitude(B)).
+    case dot_product(A, B) of 
+	0.0 -> 0;
+	X -> case magnitude(A) of
+		 0.0 -> 0.0;
+		 Y -> case magnitude(B) of
+			  0.0 -> 0.0;
+			  Z -> X / (Y * Z)
+		      end
+	     end
+    end.
 
 dot_product(A, B) ->
     dict:fold(fun (Index, ValueA, Dot) ->
@@ -242,8 +251,8 @@ magnitude(Vector) ->
 %% Compare two semantic vectors
 %%
 similarity(A, B, Vectors) ->
-    SemanticVectorA = get_semantic_vector(A, Vectors),
-    SemanticVectorB = get_semantic_vector(B, Vectors),
+    {ok, SemanticVectorA} = get_semantic_vector(A, Vectors),
+    {ok, SemanticVectorB} = get_semantic_vector(B, Vectors),
     cosine(SemanticVectorA,SemanticVectorB).
 
 %%
@@ -252,14 +261,14 @@ similarity(A, B, Vectors) ->
 similar_to(A, Min, Max, Vectors) ->
     case get_semantic_vector(A, Vectors) of
 	{ok, VectorA} ->
-	    lists:reverse(db:iterate(fun ({Word, VectorB}, Acc) ->
-					     Similarity = cosine(VectorA, VectorB),
-					     if Similarity > Min, Similarity =< Max, A /= Word ->
-						     ordsets:add_element({Similarity, Word}, Acc);
-						true ->
-						     Acc
-					     end
-				     end, ordsets:new()));
+	    lists:keysort(1, dict:fold(fun (Word, VectorB, Acc) ->
+					       Similarity = cosine(VectorA, VectorB),
+					       if Similarity > Min, Similarity =< Max, A /= Word ->
+						       [{Similarity, Word}| Acc];
+						  true ->
+						       Acc
+					       end
+				       end, [], Vectors));
 	not_found ->
 	    not_found
     end.
