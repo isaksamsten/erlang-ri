@@ -1,6 +1,14 @@
 -module(ri).
 -compile(export_all).
 
+-define(DATA, "2013-01-07").
+-define(MAJOR_VERSION, 0).
+-define(MINOR_VERSION, 1).
+-define(REVISION, 'beta-1').
+
+-define(AUTHOR, "Isak Karlsson <isak-kar@dsv.su.se>").
+
+
 -record(index_vector, {length, prob, variance}).
 
 %%
@@ -69,7 +77,10 @@ wait_for_vector_updates(Self, Cores, Result) ->
 		    io:format(standard_error, "Merging vectors from ~p in ~p second(s) ~n", 
 			      [Pid, timer:now_diff(erlang:now(), Then) / 1000000]),
 		    wait_for_vector_updates(Self, Cores - 1, Result0);
-		_ -> throw({error, some_error})
+		{'EXIT', _, normal} ->
+		    Result;
+			
+		X -> throw({error, some_error, X})
 	    end
     end.
    
@@ -272,14 +283,14 @@ similarity(A, B, Vectors) ->
 similar_to(A, Min, Max, Vectors) ->
     case get_semantic_vector(A, Vectors) of
 	{ok, VectorA} ->
-	    lists:keysort(1, dict:fold(fun (Word, VectorB, Acc) ->
-					       Similarity = cosine(VectorA, VectorB),
-					       if Similarity > Min, Similarity =< Max, A /= Word ->
-						       [{Similarity, Word}| Acc];
-						  true ->
-						       Acc
-					       end
-				       end, [], Vectors));
+	    lists:reverse(lists:keysort(1, dict:fold(fun (Word, VectorB, Acc) ->
+							     Similarity = cosine(VectorA, VectorB),
+							     if Similarity > Min, Similarity =< Max, A /= Word ->
+								     [{Similarity, Word}| Acc];
+								true ->
+								     Acc
+							     end
+						     end, [], Vectors)));
 	not_found ->
 	    not_found
     end.
@@ -309,6 +320,149 @@ run_experiment(Io, Cores, Collectors, Window, Length, Prob, Variance) ->
 											variance=Variance}),
     io:format(standard_error, "Updating vectors took: ~p ~n", [timer:now_diff(now(), Then) / 1000000]),
     Result.
+
+
+%%
+%% Entry for the command line interface
+%%
+start() ->
+    case init:get_argument(h) of
+	{ok, _} ->
+	    show_help(),
+	    halt();
+	_ -> true
+    end,
+    Datafile = case init:get_argument(i) of
+		   {ok, Files} ->
+		       case Files of
+			   [[File]] ->
+			       File;
+			   [_] ->
+			       stdillegal("i"),
+			       halt()
+		       end;
+		   _ ->
+		       stdwarn("Input dataset is required"),
+		       halt()
+	       end,
+    Window = case init:get_argument(w) of
+		    {ok, Ws} ->
+			case Ws of
+			    [[W]] ->
+				list_to_integer(W);
+			    [_] ->
+				stdillegal("w"),
+				halt()
+			end;
+		    _ -> 
+			2
+	     end,
+    Cores = case init:get_argument(c) of
+		    {ok, Cs} ->
+			case Cs of
+			    [[C]] ->
+				list_to_integer(C);
+			    [_] ->
+				stdillegal("c"),
+				halt()
+			end;
+		    _ -> 
+			4
+	    end,
+    
+    Collectors = case init:get_argument(d) of
+		     {ok, Cos} ->
+			 case Cos of
+			     [[Co]] ->
+				 list_to_integer(Co);
+			    [_] ->
+				 stdillegal("d"),
+				 halt()
+			 end;
+		     _ -> 
+			 2
+		 end,
+    Length = case init:get_argument(l) of
+		 {ok, Ls} ->
+		     case Ls of
+			 [[L]] ->
+			     list_to_integer(L);
+			 [_] ->
+			     stdillegal("l"),
+			     halt()
+		     end;
+		 _ -> 
+		     4000
+	     end,
+    Prob = case init:get_argument(p) of
+	       {ok, Ps} ->
+		   case Ps of
+		       [[P]] ->
+			   list_to_integer(P);
+		       [_] ->
+			   stdillegal("p"),
+			   halt()
+		   end;
+	       _ -> 
+		   7
+	   end,
+    Variance = case init:get_argument(w) of
+		   {ok, Vs} ->
+		       case Vs of
+			   [[V]] ->
+			       list_to_integer(V);
+			   [_] ->
+			       stdillegal("v"),
+			       halt()
+		       end;
+		   _ -> 
+		       0
+	       end,
+    Result = run(Datafile, Cores, Collectors, Window, Length, Prob, Variance),
+    io:format("Got: ~p tokens ~n", [dict:size(Result)]),
+    halt().
+	
+stdwarn(Out) ->
+    io:format(standard_error, " **** ~s **** ~n", [Out]),
+    io:format(standard_error, "See tr -h for options ~n", []).
+
+stdillegal(Arg) ->
+    stdwarn(io_lib:format("Error: Missing argument to -~s", [Arg])).
+
+show_help() ->
+    io:format(standard_error, "~s", [show_information() ++
+"
+
+Example: ri -i ../data/brown.txt -w 2 -c 4 -d 2 -l 4000 -p 7 -v 2
+         ri -i ../data/brown.txt -w 2
+
+-i   [str()]
+     Input file. One document per line, words (tokens) are comma separated.
+
+-w   [int()]
+     The number of items in each side of the sliding window (efault: 2)
+
+-c   [int()]
+     Number of parallell executions (default: 4)
+
+-d   [int()]
+     Number of paralell collectors (default: 2)
+
+-l   [int()]
+     Length of the index vector (default: 4000)
+
+-p   [int()]
+     Number of non negative bits in index vector (default: 7)
+
+-v   [number]
+     Variance in the number of non negative bits. For example, 
+     setting -v to 2 gives 7 +- 2 non negative bits in index vector
+    (default: 0).
+"]).
+
+show_information() ->
+    io_lib:format("Random index, Version (of ~s) ~p.~p.~s
+All rights reserved ~s", [?DATA, ?MAJOR_VERSION, ?MINOR_VERSION, ?REVISION, ?AUTHOR]).
 
 test() ->
     Vector0 = new_semantic_vector(),
