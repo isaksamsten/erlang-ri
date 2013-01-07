@@ -36,6 +36,9 @@ parse(call, Io, {Id, Fun}) ->
 	    throw({error, Reason})
     end.
 
+reader(File) ->
+    spawn_link(?MODULE, spawn_parser, [File]).
+
 spawn_parser(File) ->
     case file:open(File, [raw, read]) of
 	{ok, Io} ->
@@ -45,18 +48,22 @@ spawn_parser(File) ->
     end.
 
 parse_incremental(Io) ->
-    receive
-	{more, Parent} ->
-	    case file:read_line(Io) of
-		{ok, Line} ->
+    case file:read_line(Io) of
+	{ok, Line} ->
+	    receive
+		{more, Parent} ->
 		    Item = parse_line(Line, []),
 		    Parent ! {ok, Parent, Item},
-		    parse_incremental(Io);
-		eof ->
-		    Parent ! {eof, Parent};
-		{error, Reason} ->
-		    throw({error, Reason})
-	    end
+		    parse_incremental(Io)
+	    end;
+	eof ->
+	    receive 
+		{more, Parent} ->
+		    Parent ! {eof, Parent},
+		    parse_incremental(Io)			
+	    end;
+	{error, Reason} ->
+	    throw({error, Reason})
     end.
 
 get_next_line(Pid) ->

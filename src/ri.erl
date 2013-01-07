@@ -1,6 +1,8 @@
 -module(ri).
 -compile(export_all).
 
+-record(index_vector, {length, prob, variance}).
+
 %%
 %% Initialize the ets-tables (index_vectors and semantic_vectors)
 %%
@@ -19,24 +21,38 @@ stop() ->
 %% Process that updates an item (concurrently)
 %% Receives: {new, Items, Window, Length, Prob} or exit
 %%
-vector_update_process(Parent, Result) ->
-    receive
-	{new, {Item, Window, Length, Prob}} ->
-	    Result0 = update_item(Result, Item, Window, Length, Prob),
-	    vector_update_process(Parent, Result0);
-	exit ->
+vector_update_process(Parent, Io, Window, IndexVector, Result) ->
+    case csv:get_next_line(Io) of
+	{ok, Item} ->
+	    Result0 = update_item(Result, Item, Window, IndexVector),
+	    vector_update_process(Parent, Io, Window, IndexVector, Result0);
+	eof ->
 	    Parent ! {done, self(), Parent, Result}
     end.
+
+vector_update_collector_process(Parent, Io, Window, IndexVector, Childrens) ->
+    Self = self(),
+    io:format(standard_error, "Collector ~p spawning ~p updaters ~n", [Self, Childrens]),
+    [spawn_link(?MODULE, vector_update_process,
+		[Self, Io, Window, IndexVector, dict:new()]) || _ <- lists:seq(1, Childrens)],
+    Result = wait_for_vector_updates(Self, Childrens, dict:new()),
+    Parent ! {done, Self, Parent, Result}.
 
 %%
 %% Spawn a Cores number of "vector_update_process"
 %% that can receive Items for processing
 %%
-spawn_vector_update_processes(Cores, Items, Window, Length, Prob) ->
+spawn_vector_update_processes(Cores, Collectors, Io, Window, IndexVector) ->
+    io:format(standard_error, "Spawning ~p collectors ~n", [Collectors]),
     Self = self(),
-    Runners = [spawn_link(?MODULE, vector_update_process, [Self, dict:new()]) || _ <-  lists:seq(1, Cores)],
-    run_vector_update_processes(queue:from_list(Runners), Items, Window, Length, Prob),
-    wait_for_vector_updates(Self, Cores, dict:new()).
+    Childrens = round(Cores / Collectors),
+    lists:foreach(fun (_) ->
+			  spawn_link(?MODULE, vector_update_collector_process,
+				     [Self, Io, Window, IndexVector, Childrens])
+		  end, lists:seq(1, Collectors)),
+    wait_for_vector_updates(Self, Collectors, dict:new()).
+    
+
 
 %%
 %% Wait for Cores messages to be sent to Self in the form of: {done,
@@ -49,48 +65,24 @@ wait_for_vector_updates(Self, Cores, Result) ->
 	    receive
 		{done, Pid, Self, Dict} ->
 		    Then = now(),
-		    Result0 = dict:merge(fun (_, A, B) ->
-						 merge_semantic_vector(A, B)
-					 end, Result, Dict),
+		    Result0 = merge_semantic_vectors(Result, Dict),
 		    io:format(standard_error, "Merging vectors from ~p in ~p second(s) ~n", 
 			      [Pid, timer:now_diff(erlang:now(), Then) / 1000000]),
 		    wait_for_vector_updates(Self, Cores - 1, Result0);
 		_ -> throw({error, some_error})
 	    end
     end.
-
-%%
-%% Run each Item in Items in a separate process (from Runners).
-%% When length(Items) > length(Runners) each process handle more items
-%% in a "circle"
-%%
-run_vector_update_processes(Runners, [], _, _, _) ->
-    [R ! exit || R <- queue:to_list(Runners)];
-run_vector_update_processes(Runners, [Item|Rest], Window, Length, Prob) ->
-    {{value, R}, Queue} = queue:out(Runners),
-    R ! {new, {Item, Window, Length, Prob}},
-    run_vector_update_processes(queue:in(R, Queue), Rest, Window, Length, Prob);
-run_vector_update_processes(Runners, {csv, Pid} = Items, Window, Length, Prob) ->
-    {{value, R}, Queue} = queue:out(Runners),
-    case csv:get_next_line(Pid) of
-	{ok, Item} ->
-	    R ! {new, {Item, Window, Length, Prob}},
-	    run_vector_update_processes(queue:in(R, Queue), Items, Window, Length, Prob);
-	eof ->
-	    [Process ! exit || Process <- queue:to_list(Runners)]
-    end.
-
    
 %%
 %% Update Items (a list of Items)
 %%
-update(Parent, Items, Window, Length, Prob) ->
+update(Parent, Items, Window, IndexVector) ->
     case Items of
 	[] ->
 	    ok;
 	[Item|Rest] ->
-	    update_item(Parent, Item, Window, Length, Prob),
-	    update(Parent, Rest, Window, Length, Prob)
+	    update_item(Parent, Item, Window, IndexVector),
+	    update(Parent, Rest, Window, IndexVector)
     end.
 
 
@@ -98,77 +90,80 @@ update(Parent, Items, Window, Length, Prob) ->
 %% Update an item, using a window length of Window
 %% a random index vector or Length
 %%
-update_item(Result, Items, Window, Length, Prob) ->
-    update_item(Result, Items, Window, Length, Prob, queue:new()).
-update_item(Result, Items, Window, Length, Prob, Queue) ->
+update_item(Result, Items, Window, IndexVector) ->
+    update_item(Result, Items, Window, IndexVector, queue:new()).
+update_item(Result, Items, Window, IndexVector, Queue) ->
     case Items of
 	[] ->
 	    Result;
 	[Pivot|Rest] ->
-	    Result0 = update_all(Result, queue:to_list(Queue), Length, Prob, Pivot),
-	    Result1 = update_limit(Result0, {Window, 0}, Rest, Length, Prob, Pivot),
-	    update_item(Result1, Rest, Window, Length, Prob, case queue:len(Queue) >= Window of
-								 true->
-								     {_, Old} = queue:out(Queue),
-								     queue:in(Pivot, Old);
-								 false ->
-								     queue:in(Pivot, Queue)
-							     end)
+	    Result0 = update_all(Result, queue:to_list(Queue), IndexVector, Pivot),
+	    Result1 = update_limit(Result0, {Window, 0}, Rest, IndexVector, Pivot),
+	    update_item(Result1, Rest, Window, IndexVector, case queue:len(Queue) >= Window of
+								true->
+								    {_, Old} = queue:out(Queue),
+								    queue:in(Pivot, Old);
+								false ->
+								    queue:in(Pivot, Queue)
+							    end)
     end.
 
 %%
 %% Update Pivot with all items in Items
 %%
-update_all(Result, Items, Length, Prob, Pivot) ->
+update_all(Result, Items, IndexVector, Pivot) ->
     case Items of
 	[] ->
 	    Result;
 	[Item|Rest] ->
-	    %Parent ! {update, self(), Parent, {Pivot, Item, Length, Prob}},
-	    Result0 = update_pivot(Result, Pivot, Item, Length, Prob),
-	    update_all(Result0, Rest, Length, Prob, Pivot)
+	    Result0 = update_pivot(Result, Pivot, Item, IndexVector),
+	    update_all(Result0, Rest, IndexVector, Pivot)
     end.
 
 %% 
 %% Update Pivot with Current to Limit number of items
 %%
-update_limit(Result, {Limit, Current}, Items, Length, Prob, Pivot) ->
+update_limit(Result, {Limit, Current}, Items, IndexVector, Pivot) ->
     case Items of
 	[] ->
 	    Result;
 	[Item|Rest] ->
 	    if Limit > Current ->
-		    %Parent ! {update, self(), Parent, {Pivot, Item, Length, Prob}},
-		    Result0 = update_pivot(Result, Pivot, Item, Length, Prob),
-		    update_limit(Result0, {Limit, Current + 1}, Rest, Length, Prob, Pivot);
+		    Result0 = update_pivot(Result, Pivot, Item, IndexVector),
+		    update_limit(Result0, {Limit, Current + 1}, Rest, IndexVector, Pivot);
 	       true ->
 		    Result
 	    end
     end.
 
 %%
-%% Update Pivot (semantic vector) w.r.t. Item (index vector), do this in current thread.
+%% Update Pivot (semantic vector) w.r.t. Item (index vector)
 %%
-update_pivot(Result, Pivot, Item, Length, Prob) ->
-    IndexVector  = get_index_vector(Item, Length, Prob),
+update_pivot(Result, Pivot, Item, IndexVectorInfo) ->
+    IndexVector  = get_index_vector(Item, IndexVectorInfo),
     dict:update(Pivot, fun(PivotVector) ->
 			       add_vectors(PivotVector, IndexVector)
-		       end, new_semantic_vector(Length), Result).
+		       end, new_semantic_vector(), Result).
 
 %%
 %% Init a random vector of Length lenght and the Prob prob to
 %% spawn -1 or 1
 %%
-get_index_vector(Item, Length, Prob) ->	    
+get_index_vector(Item, #index_vector{length=Length,
+				     prob=Prob,
+				     variance=Variance}) ->	    
     case ets:lookup(index_vectors, Item) of
 	[{_, Vector}] ->
 	    Vector;
 	[] ->
-	    Vector = new_index_vector(Length, Prob, 0),
+	    Vector = new_index_vector(Length, Prob, Variance),
 	    ets:insert(index_vectors, {Item, Vector}),
 	    Vector
     end.
 
+%%
+%% Get the semantic vector for Item from Vectors
+%%
 get_semantic_vector(Item, Vectors) ->
     case dict:find(Item, Vectors) of
 	{ok, Vector} ->
@@ -178,9 +173,25 @@ get_semantic_vector(Item, Vectors) ->
     end.
 
 %%
+%% Merge two collections of semantic vectors
+%%
+merge_semantic_vectors(VectorA, VectorB) ->
+    dict:merge(fun (_, A, B) ->
+		       merge_semantic_vector(A, B)
+	       end, VectorA, VectorB).
+
+%%
+%% Merge the semantic vectors for two Items
+%%
+merge_semantic_vector(VectorA, VectorB) ->
+    dict:merge(fun (_Key, ValueA, ValueB) ->
+		       ValueA + ValueB
+	       end, VectorA, VectorB).
+
+%%
 %% Create a new semantic vector
 %%
-new_semantic_vector(_Length) ->   
+new_semantic_vector() ->   
     dict:new().
     
 %%
@@ -275,42 +286,38 @@ similar_to(A, Min, Max, Vectors) ->
 
 			 
 		      
-
 %%
-%% Run a file
+%% Running a file of documents
 %%
-run(file, File, Cores, Window, Length, Prob) ->
-    io:format(standard_error, "*** Running '~p' on ~p core(s) *** ~n", [File, Cores]),
-    Then = now(),
-    Items = csv:parse(file, File),
-    io:format("Reading file took: ~p ~n", [timer:now_diff(now(), Then) / 1000000]),
-    run_experiment(Items, Cores, Window, Length, Prob);
-
-run(incremental, File, Cores, Window, Length, Prob) ->
-    io:format(standard_error, "*** Running '~p' on ~p core(s) *** ~n", [File, Cores]),
-    Pid = spawn_link(csv, spawn_parser, [File]),
-    run_experiment({csv, Pid}, Cores, Window, Length, Prob).
+run(File, Cores, Collectors, Window, Length, Prob, Variance) ->
+    io:format(standard_error, "*** Running '~p' on ~p/~p core(s) *** ~n", [File, Cores, Collectors]),
+    io:format(standard_error, "*** Sliding window: ~p, Index vector: ~p, Non zero bits: ~p+-~p *** ~n",
+	      [Window, Length, Prob, Variance]),
+    Pid = csv:reader(File),
+    run_experiment(Pid, Cores, Collectors, Window, Length, Prob, Variance).
     
 
 %%
 %% Run a list of lists
 %%
-run_experiment(Items, Cores, Window, Length, Prob) ->
+run_experiment(Io, Cores, Collectors, Window, Length, Prob, Variance) ->
     catch stop(),
     init(),
     Then = now(),
-    Result = spawn_vector_update_processes(Cores, Items, Window, Length, Prob),
+    Result = spawn_vector_update_processes(Cores, Collectors, Io, Window, #index_vector{length=Length, 
+											prob=Prob, 
+											variance=Variance}),
     io:format(standard_error, "Updating vectors took: ~p ~n", [timer:now_diff(now(), Then) / 1000000]),
     Result.
 
 test() ->
-    Vector0 = new_semantic_vector(1000),
-    _Vector1 = new_semantic_vector(1000),
-    _Vector2 = new_semantic_vector(1000),
+    Vector0 = new_semantic_vector(),
+    _Vector1 = new_semantic_vector(),
+    _Vector2 = new_semantic_vector(),
 
-    Index0 = new_index_vector(1000, 7, 0),
-    Index1 = new_index_vector(1000, 7, 0),
-    _Index2 = new_index_vector(1000, 7, 0),
+    Index0 = new_index_vector(1000, 7, 2),
+    Index1 = new_index_vector(1000, 7, 2),
+    _Index2 = new_index_vector(1000, 7, 2),
 
     Vi0 = add_vectors(Vector0, Index0),
     Vi1 = add_vectors(Vi0, Index1),
@@ -322,17 +329,6 @@ test() ->
     equal(Vi1, merge_semantic_vector(Vi2, Vi3)).
     
 
-merge_semantic_vectors([Head|Rest]) ->
-    lists:foldl(fun (Vector, Acc) ->
-			dict:merge(fun (_, A, B) ->
-					   merge_semantic_vector(A, B)
-				   end, Vector, Acc)
-		end, Head, Rest).
-
-merge_semantic_vector(VectorA, VectorB) ->
-    dict:merge(fun (_Key, ValueA, ValueB) ->
-		       ValueA + ValueB
-	       end, VectorA, VectorB).
 
 equal(D1, D2) ->
     equal(dict:fetch_keys(D1) ++ dict:fetch_keys(D2), D1, D2).
