@@ -14,6 +14,9 @@
 %%
 %% Initialize the ets-tables (index_vectors and semantic_vectors)
 %%
+%% NOTE: two processes might write, and read, at the same time. This
+%% must be fixed.
+%%
 init() ->
     ets:new(index_vectors, [public, named_table, {write_concurrency, true}, {read_concurrency, true}]),
     ok.
@@ -530,6 +533,9 @@ Example: ri -i ../data/brown.txt -w 2 -c 4 -d 2 -l 4000 -p 7 -v 2
 -i   [str()]
      Input file. One document per line, words (tokens) are comma separated.
 
+-o   []
+     Boolean flag. If set, a model will be written to stdout. (default: false)
+
 -w   [int()]
      The number of items in each side of the sliding window (default: 2)
 
@@ -548,7 +554,7 @@ Example: ri -i ../data/brown.txt -w 2 -c 4 -d 2 -l 4000 -p 7 -v 2
 -v   [number]
      Variance in the number of non negative bits. For example, 
      setting -v to 2 gives 7 +- 2 non negative bits in index vector
-    (default: 0).
+     (default: 0).
 "]).
 
 show_information() ->
