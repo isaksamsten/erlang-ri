@@ -77,8 +77,8 @@ wait_for_vector_updates(Self, Cores, Result) ->
 		    io:format(standard_error, "Merging vectors from ~p in ~p second(s) ~n", 
 			      [Pid, timer:now_diff(erlang:now(), Then) / 1000000]),
 		    wait_for_vector_updates(Self, Cores - 1, Result0);
-		{'EXIT', _, normal} ->
-		    Result;
+		%{'EXIT', _, normal} ->
+		%    Result;
 			
 		X -> throw({error, some_error, X})
 	    end
@@ -281,19 +281,60 @@ similarity(A, B, Vectors) ->
 %% Get items similar to A
 %%
 similar_to(A, Min, Max, Vectors) ->
-    case get_semantic_vector(A, Vectors) of
+    similar_to(A, fun (Word, Similarity) ->
+			  Similarity =< Max, Similarity > Min
+		  end, Vectors).
+
+similar_to(A, Fun, Vectors) ->
+    case dict:find(A, Vectors) of
 	{ok, VectorA} ->
-	    lists:reverse(lists:keysort(1, dict:fold(fun (Word, VectorB, Acc) ->
-							     Similarity = cosine(VectorA, VectorB),
-							     if Similarity > Min, Similarity =< Max, A /= Word ->
-								     [{Similarity, Word}| Acc];
-								true ->
-								     Acc
-							     end
-						     end, [], Vectors)));
-	not_found ->
+	    Self = self(),
+	    Cores = erlang:system_info(schedulers),
+	    Runners = [spawn_link(?MODULE, similarity_calculation_process, [Self, VectorA, Fun, []]) || 
+			  _ <- lists:seq(1, Cores)],
+	    distribute_similarity_collections(queue:from_list(Runners), Self, dict:erase(A, Vectors)),
+	    collect_similarity_processes(Self, Cores, []);
+	error ->
 	    not_found
     end.
+
+distribute_similarity_collections(Queue0, Self, Vectors) ->
+    dict:fold(fun (Word, Vector, Queue) ->
+		       {{value, R}, Rest} = queue:out(Queue),
+		       R ! {calculate, Self, R, {Word, Vector}},
+		       queue:in(R, Rest)
+	       end, Queue0, Vectors),
+    lists:foreach(fun (R) ->
+			  R ! {done, calculate}
+		  end, queue:to_list(Queue0)).
+
+similarity_calculation_process(Parent, VectorA, Fun, Acc) -> 
+    Self = self(),
+    receive
+	{calculate, Parent, Self, {Word, VectorB}} ->
+	    Similarity = cosine(VectorA, VectorB),
+	    case Fun(Word, Similarity) of
+		true ->
+		    similarity_calculation_process(Parent, VectorA, Fun, [{Similarity, Word}|Acc]);		
+		false ->
+		    similarity_calculation_process(Parent, VectorA, Fun, Acc)
+	    end;		    
+	{done, calculate} ->
+	    Parent ! {similarity, Parent, Self, Acc}
+    end.
+
+collect_similarity_processes(Self, Cores, Acc) ->
+    case Cores of
+	0 -> lists:reverse(lists:keysort(1, Acc));
+	_ -> 
+	    receive
+		{similarity, Self, _, Similarity} ->
+		    collect_similarity_processes(Self, Cores - 1, Similarity ++ Acc)
+	    end
+    end.
+		    
+	    
+    
 
 			 
 		      
