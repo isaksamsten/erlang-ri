@@ -81,9 +81,8 @@ wait_for_vector_updates(Self, Cores, Result) ->
 		    io:format(standard_error, "Merging vectors from ~p in ~p second(s) ~n", 
 			      [Pid, timer:now_diff(erlang:now(), Then) / 1000000]),
 		    wait_for_vector_updates(Self, Cores - 1, Result0);
-		%{'EXIT', _, normal} ->
-		%    Result;
-			
+		{'EXIT', _, normal} ->
+		    wait_for_vector_updates(Self, Cores, Result);			
 		X -> throw({error, some_error, X})
 	    end
     end.
@@ -492,8 +491,25 @@ start() ->
 		   _ -> 
 		       0
 	       end,
+    Output = case init:get_argument(o) of
+		 {ok, _} ->
+		     true;
+		 _ -> false
+	     end,
     Result = run(Datafile, Cores, Collectors, Window, Length, Prob, Variance),
-    io:format("Got: ~p tokens ~n", [dict:size(Result)]),
+    io:format(standard_error, "Got: ~p tokens ~n", [dict:size(Result)]),
+    if Output == true ->
+	    io:format(standard_error, "*** Writing model to standard out *** ~n", []),
+	    dict:fold(fun (Word, Vector, _) ->
+			      io:format("~s,", [Word]),
+			      Indicies = lists:reverse(dict:fold(fun (Index, Value, Acc) ->
+									 [io_lib:format("~p:~p", [Index, Value])|Acc]
+								 end, [], Vector)),
+			      io:format("~s ~n", [string:join(Indicies, ",")])
+		      end, [], Result);
+       true ->
+	    ok
+    end,
     halt().
 	
 stdwarn(Out) ->
@@ -509,12 +525,13 @@ show_help() ->
 
 Example: ri -i ../data/brown.txt -w 2 -c 4 -d 2 -l 4000 -p 7 -v 2
          ri -i ../data/brown.txt -w 2
+         ri -i ../data/brown.txt -w 2 -c 4 -o > model.txt
 
 -i   [str()]
      Input file. One document per line, words (tokens) are comma separated.
 
 -w   [int()]
-     The number of items in each side of the sliding window (efault: 2)
+     The number of items in each side of the sliding window (default: 2)
 
 -c   [int()]
      Number of parallell executions (default: 4)
