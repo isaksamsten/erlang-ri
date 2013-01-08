@@ -4,7 +4,7 @@
 -define(DATA, "2013-01-07").
 -define(MAJOR_VERSION, 0).
 -define(MINOR_VERSION, 1).
--define(REVISION, 'beta-1').
+-define(REVISION, 'beta-2').
 
 -define(AUTHOR, "Isak Karlsson <isak-kar@dsv.su.se>").
 
@@ -38,6 +38,10 @@ vector_update_process(Parent, Io, Window, IndexVector, Result) ->
 	    Parent ! {done, self(), Parent, Result}
     end.
 
+%%
+%% NOTE: This should be called recursivley to create smaller
+%% merges per process
+%%
 vector_update_collector_process(Parent, Io, Window, IndexVector, Childrens) ->
     Self = self(),
     io:format(standard_error, "Collector ~p spawning ~p updaters ~n", [Self, Childrens]),
@@ -280,17 +284,40 @@ similarity(A, B, Vectors) ->
 %%
 %% Get items similar to A
 %%
-similar_to(A, Min, Max, Vectors) ->
-    similar_to(A, fun (Word, Similarity) ->
-			  Similarity =< Max, Similarity > Min
-		  end, Vectors).
+similar_to(A, {Min, Max}, Vectors) when is_number(Min), is_number(Max)->
+    similar_to(A, fun (_, Similarity) ->
+			  (Similarity =< Max) and (Similarity > Min)
+		  end, Vectors);
+similar_to(A, Fun, Vectors) when is_function(Fun)->
+    similar_to(A, Fun, fun cosine/2, Vectors);
+similar_to(A, {Fun, Not}, Vectors) ->
+    similar_to(A, Fun, 
+	       fun (VectorA, VectorB) ->
+		       cosine(VectorA, VectorB) -
+			   case dict:find(Not, Vectors) of
+			       {ok, VectorC} ->
+				   cosine(VectorC, VectorB);
+			       error ->
+				   1
+			   end
+	       end, Vectors);
+similar_to(A, Not, Vectors) ->
+    similar_to(A, { fun (_, _) ->
+			    true
+		    end, Not}, Vectors).
+			   
 
-similar_to(A, Fun, Vectors) ->
+%%
+%% Calculate the similarity between A and all other Items
+%% Fun -> fun (Word, Similarity) -> boolean()
+%% Sim -> fun (VectorA, VectorB) -> float()
+%%
+similar_to(A, Fun, SimFun, Vectors) ->
     case dict:find(A, Vectors) of
 	{ok, VectorA} ->
 	    Self = self(),
 	    Cores = erlang:system_info(schedulers),
-	    Runners = [spawn_link(?MODULE, similarity_calculation_process, [Self, VectorA, Fun, []]) || 
+	    Runners = [spawn_link(?MODULE, similarity_calculation_process, [Self, VectorA, Fun, SimFun, []]) || 
 			  _ <- lists:seq(1, Cores)],
 	    distribute_similarity_collections(queue:from_list(Runners), Self, dict:erase(A, Vectors)),
 	    collect_similarity_processes(Self, Cores, []);
@@ -298,6 +325,10 @@ similar_to(A, Fun, Vectors) ->
 	    not_found
     end.
 
+%%
+%% Distribute the similarity calculations evenly over all
+%% availible processor
+%%
 distribute_similarity_collections(Queue0, Self, Vectors) ->
     dict:fold(fun (Word, Vector, Queue) ->
 		       {{value, R}, Rest} = queue:out(Queue),
@@ -308,35 +339,37 @@ distribute_similarity_collections(Queue0, Self, Vectors) ->
 			  R ! {done, calculate}
 		  end, queue:to_list(Queue0)).
 
-similarity_calculation_process(Parent, VectorA, Fun, Acc) -> 
+%%
+%% Calculate the similarity between VectorA and another vector
+%% received, {calculate, _, _, {Word, VectorB}}, using Fun
+%%
+similarity_calculation_process(Parent, VectorA, Fun, SimFun, Acc) -> 
     Self = self(),
     receive
-	{calculate, Parent, Self, {Word, VectorB}} ->
-	    Similarity = cosine(VectorA, VectorB),
-	    case Fun(Word, Similarity) of
+	{calculate, Parent, Self, {WordB, VectorB}} ->
+	    Similarity = SimFun(VectorA, VectorB),
+	    case Fun(WordB, Similarity) of
 		true ->
-		    similarity_calculation_process(Parent, VectorA, Fun, [{Similarity, Word}|Acc]);		
+		    similarity_calculation_process(Parent, VectorA, Fun, SimFun, [{WordB, Similarity}|Acc]);		
 		false ->
-		    similarity_calculation_process(Parent, VectorA, Fun, Acc)
+		    similarity_calculation_process(Parent, VectorA, Fun, SimFun, Acc)
 	    end;		    
 	{done, calculate} ->
 	    Parent ! {similarity, Parent, Self, Acc}
     end.
 
+%%
+%% Collect the result from calculating the similarites.
+%%
 collect_similarity_processes(Self, Cores, Acc) ->
     case Cores of
-	0 -> lists:reverse(lists:keysort(1, Acc));
+	0 -> lists:reverse(lists:keysort(2, Acc));
 	_ -> 
 	    receive
 		{similarity, Self, _, Similarity} ->
 		    collect_similarity_processes(Self, Cores - 1, Similarity ++ Acc)
 	    end
     end.
-		    
-	    
-    
-
-			 
 		      
 %%
 %% Running a file of documents
