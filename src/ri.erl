@@ -47,24 +47,29 @@ vector_update_process(Parent, Io, Window, IndexVector, Result) ->
 %%
 vector_update_collector_process(Parent, Io, Window, IndexVector, Childrens) ->
     Self = self(),
-%    io:format(standard_error, "Collector ~p spawning ~p updaters ~n", [Self, Childrens]),
-    [spawn_link(?MODULE, vector_update_process,
-		[Self, Io, Window, IndexVector, dict:new()]) || _ <- lists:seq(1, Childrens)],
-    Result = wait_for_vector_updates(Self, Childrens, dict:new()),
-    Parent ! {done, Self, Parent, Result}.
-
+    case Childrens of
+	X when X > 2 ->
+	    Result = spawn_vector_update_processes(Childrens, 2, Io, Window, IndexVector),
+	    Parent ! {done, Self, Parent, Result};
+	_ ->
+	    %io:format(standard_error, "Collector ~p spawning ~p updaters ~n", [Self, Childrens]),
+	    [spawn_link(?MODULE, vector_update_process,
+			[Self, Io, Window, IndexVector, dict:new()]) || _ <- lists:seq(1, Childrens)],
+	    Result = wait_for_vector_updates(Self, Childrens, dict:new()),
+	    Parent ! {done, Self, Parent, Result}
+    end.
 %%
 %% Spawn a Cores number of "vector_update_process"
 %% that can receive Items for processing
 %%
 spawn_vector_update_processes(Cores, Collectors, Io, Window, IndexVector) ->
-%    io:format(standard_error, "Spawning ~p collectors ~n", [Collectors]),
     Self = self(),
     Childrens = round(Cores / Collectors),
+    %io:format(standard_error, "Spawning ~p collectors ~n", [Collectors]),
     lists:foreach(fun (_) ->
 			  spawn_link(?MODULE, vector_update_collector_process,
 				     [Self, Io, Window, IndexVector, Childrens])
-		  end, lists:seq(1, Collectors)),
+		  end, lists:seq(1, 2)),
     wait_for_vector_updates(Self, Collectors, dict:new()).
     
 
@@ -81,8 +86,8 @@ wait_for_vector_updates(Self, Cores, Result) ->
 		{done, Pid, Self, Dict} ->
 		    Then = now(),
 		    Result0 = merge_semantic_vectors(Result, Dict),
-		    io:format(standard_error, "Merging vectors from ~p in ~p second(s) ~n", 
-			      [Pid, timer:now_diff(erlang:now(), Then) / 1000000]),
+%		    io:format(standard_error, "~p Merging vectors ~p from ~p in ~p second(s) ~n", 
+%			      [Cores, Self, Pid, timer:now_diff(erlang:now(), Then) / 1000000]),
 		    wait_for_vector_updates(Self, Cores - 1, Result0);
 		{'EXIT', _, normal} ->
 		    wait_for_vector_updates(Self, Cores, Result);			
