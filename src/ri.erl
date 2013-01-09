@@ -86,8 +86,8 @@ wait_for_vector_updates(Self, Cores, Result) ->
 		{done, Pid, Self, Dict} ->
 		    Then = now(),
 		    Result0 = merge_semantic_vectors(Result, Dict),
-%		    io:format(standard_error, "~p Merging vectors ~p from ~p in ~p second(s) ~n", 
-%			      [Cores, Self, Pid, timer:now_diff(erlang:now(), Then) / 1000000]),
+		    io:format(standard_error, "~p Merging vectors ~p from ~p in ~p second(s) ~n", 
+			      [Cores, Self, Pid, timer:now_diff(erlang:now(), Then) / 1000000]),
 		    wait_for_vector_updates(Self, Cores - 1, Result0);
 		{'EXIT', _, normal} ->
 		    wait_for_vector_updates(Self, Cores, Result);			
@@ -519,9 +519,9 @@ stdillegal(Arg) ->
 show_help() ->
     io:format(standard_error,"~s
 
-Example: ri -i ../data/brown.txt -w 2 -c 4 -d 2 -l 4000 -p 7 -v 2
+Example: ri -i ../data/brown.txt -w 2 -c 4 -l 4000 -p 7 -v 2
          ri -i ../data/brown.txt -w 2
-         ri -i ../data/brown.txt -w 2 -c 4 -o > model.txt
+         ri -i ../data/brown.txt -w 2 -o > model.txt
 
 -i   [str()]
      Input file. One document per line, words (tokens) are comma separated.
