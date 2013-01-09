@@ -47,7 +47,7 @@ vector_update_process(Parent, Io, Window, IndexVector, Result) ->
 %%
 vector_update_collector_process(Parent, Io, Window, IndexVector, Childrens) ->
     Self = self(),
-    io:format(standard_error, "Collector ~p spawning ~p updaters ~n", [Self, Childrens]),
+%    io:format(standard_error, "Collector ~p spawning ~p updaters ~n", [Self, Childrens]),
     [spawn_link(?MODULE, vector_update_process,
 		[Self, Io, Window, IndexVector, dict:new()]) || _ <- lists:seq(1, Childrens)],
     Result = wait_for_vector_updates(Self, Childrens, dict:new()),
@@ -58,7 +58,7 @@ vector_update_collector_process(Parent, Io, Window, IndexVector, Childrens) ->
 %% that can receive Items for processing
 %%
 spawn_vector_update_processes(Cores, Collectors, Io, Window, IndexVector) ->
-    io:format(standard_error, "Spawning ~p collectors ~n", [Collectors]),
+%    io:format(standard_error, "Spawning ~p collectors ~n", [Collectors]),
     Self = self(),
     Childrens = round(Cores / Collectors),
     lists:foreach(fun (_) ->
@@ -443,21 +443,10 @@ start() ->
 				halt()
 			end;
 		    _ -> 
-			4
+			erlang:system_info(schedulers)
 	    end,
     
-    Collectors = case init:get_argument(d) of
-		     {ok, Cos} ->
-			 case Cos of
-			     [[Co]] ->
-				 list_to_integer(Co);
-			    [_] ->
-				 stdillegal("d"),
-				 halt()
-			 end;
-		     _ -> 
-			 2
-		 end,
+    Collectors = 2,
     Length = case init:get_argument(l) of
 		 {ok, Ls} ->
 		     case Ls of
@@ -523,8 +512,7 @@ stdillegal(Arg) ->
     stdwarn(io_lib:format("Error: Missing argument to -~s", [Arg])).
 
 show_help() ->
-    io:format(standard_error, "~s", [show_information() ++
-"
+    io:format(standard_error,"~s
 
 Example: ri -i ../data/brown.txt -w 2 -c 4 -d 2 -l 4000 -p 7 -v 2
          ri -i ../data/brown.txt -w 2
@@ -540,10 +528,7 @@ Example: ri -i ../data/brown.txt -w 2 -c 4 -d 2 -l 4000 -p 7 -v 2
      The number of items in each side of the sliding window (default: 2)
 
 -c   [int()]
-     Number of parallell executions (default: 4)
-
--d   [int()]
-     Number of paralell collectors (default: 2)
+     Number of parallell executions (default: ~p)
 
 -l   [int()]
      Length of the index vector (default: 4000)
@@ -555,7 +540,7 @@ Example: ri -i ../data/brown.txt -w 2 -c 4 -d 2 -l 4000 -p 7 -v 2
      Variance in the number of non negative bits. For example, 
      setting -v to 2 gives 7 +- 2 non negative bits in index vector
      (default: 0).
-"]).
+", [show_information(), erlang:system_info(schedulers)]).
 
 show_information() ->
     io_lib:format("Random index, Version (of ~s) ~p.~p.~s
