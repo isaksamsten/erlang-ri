@@ -33,6 +33,7 @@ stop() ->
 %% Receives: {new, Items, Window, Length, Prob} or exit
 %%
 vector_update_process(Parent, Io, Window, IndexVector, Result) ->
+    random:seed(erlang:now()),
     case csv:get_next_line(Io) of
 	{ok, Item} ->
 	    Result0 = update_item(Result, Item, Window, IndexVector),
@@ -51,10 +52,9 @@ vector_update_collector_process(Parent, Io, Window, IndexVector, Childrens) ->
 	X when X > 2 ->
 	    Result = spawn_vector_update_processes(Childrens, 2, Io, Window, IndexVector),
 	    Parent ! {done, Self, Parent, Result};
-	_ ->
-	    %io:format(standard_error, "Collector ~p spawning ~p updaters ~n", [Self, Childrens]),
-	    [spawn_link(?MODULE, vector_update_process,
-			[Self, Io, Window, IndexVector, dict:new()]) || _ <- lists:seq(1, Childrens)],
+	X when X == 2 ->
+	    spawn_link(?MODULE, vector_update_process, [Self, Io, Window, IndexVector, dict:new()]),
+	    spawn_link(?MODULE, vector_update_process, [Self, Io, Window, IndexVector, dict:new()]),
 	    Result = wait_for_vector_updates(Self, Childrens, dict:new()),
 	    Parent ! {done, Self, Parent, Result}
     end.
@@ -65,11 +65,8 @@ vector_update_collector_process(Parent, Io, Window, IndexVector, Childrens) ->
 spawn_vector_update_processes(Cores, Collectors, Io, Window, IndexVector) ->
     Self = self(),
     Childrens = round(Cores / Collectors),
-    %io:format(standard_error, "Spawning ~p collectors ~n", [Collectors]),
-    lists:foreach(fun (_) ->
-			  spawn_link(?MODULE, vector_update_collector_process,
-				     [Self, Io, Window, IndexVector, Childrens])
-		  end, lists:seq(1, 2)),
+    spawn_link(?MODULE, vector_update_collector_process,[Self, Io, Window, IndexVector, Childrens]),
+    spawn_link(?MODULE, vector_update_collector_process,[Self, Io, Window, IndexVector, Childrens]),
     wait_for_vector_updates(Self, Collectors, dict:new()).
     
 
@@ -83,11 +80,8 @@ wait_for_vector_updates(Self, Cores, Result) ->
 	    Result;
        true ->
 	    receive
-		{done, Pid, Self, Dict} ->
-		    Then = now(),
+		{done, _Pid, Self, Dict} ->
 		    Result0 = merge_semantic_vectors(Result, Dict),
-		    io:format(standard_error, "~p Merging vectors ~p from ~p in ~p second(s) ~n", 
-			      [Cores, Self, Pid, timer:now_diff(erlang:now(), Then) / 1000000]),
 		    wait_for_vector_updates(Self, Cores - 1, Result0);
 		{'EXIT', _, normal} ->
 		    wait_for_vector_updates(Self, Cores, Result);			
@@ -377,12 +371,48 @@ collect_similarity_processes(Self, Cores, Acc) ->
 		    collect_similarity_processes(Self, Cores - 1, Similarity ++ Acc)
 	    end
     end.
-		      
+
+
+write_model_to_file(File, Result) ->
+    Io = case file:open(File, [raw, write]) of
+	     {ok, Io0} -> Io0;
+	     error -> throw({error, file_not_found})
+	 end,
+    dict:fold(fun (Word, Vector, _) ->
+		      file:write(Io, io_lib:format("~s,", [Word])),
+		      case dict:size(Vector) of
+			  0 ->
+			      file:write(Io, io_lib:format("empty ~n", []));
+			  _ ->
+			      Indicies = lists:reverse(
+					   dict:fold(fun (Index, Value, Acc) ->
+							     [io_lib:format("~p:~p", [Index, Value])|Acc]
+						     end, [], Vector)),
+			      file:write(Io, io_lib:format("~s ~n", [string:join(Indicies, ",")]))
+		      end
+	      end, [], Result),
+    file:close(Io).
+
+write_index_to_file(File) ->
+    Io = case file:open(File, [raw, write]) of
+	     {ok, Io0} -> Io0;
+	     _ -> throw({error, file_not_found})
+	 end,
+    ets:foldl(fun ({Word, Indicies}, _) ->
+		      file:write(Io, io_lib:format("~s,", [Word])),
+		      Str = lists:foldl(fun ({Index, Value}, Acc) ->
+						[io_lib:format("~p:~p", [Index, Value])|Acc]
+					end, [], Indicies),
+		      file:write(Io, io_lib:format("~s ~n", [string:join(Str, ",")]))
+	      end, [], index_vectors),
+    file:close(Io).
+		 
+
 %%
 %% Running a file of documents
 %%
 run(File, Cores, Collectors, Window, Length, Prob, Variance) ->
-    io:format(standard_error, "*** Running '~p' on ~p/~p core(s) *** ~n", [File, Cores, Collectors]),
+    io:format(standard_error, "*** Running '~p' on ~p core(s) *** ~n", [File, Cores]),
     io:format(standard_error, "*** Sliding window: ~p, Index vector: ~p, Non zero bits: ~p+-~p *** ~n",
 	      [Window, Length, Prob, Variance]),
     Pid = csv:reader(File),
@@ -399,7 +429,7 @@ run_experiment(Io, Cores, Collectors, Window, Length, Prob, Variance) ->
     Result = spawn_vector_update_processes(Cores, Collectors, Io, Window, #index_vector{length=Length, 
 											prob=Prob, 
 											variance=Variance}),
-    io:format(standard_error, "Updating vectors took: ~p ~n", [timer:now_diff(now(), Then) / 1000000]),
+    io:format(standard_error, "*** Updating vectors took: ~p *** ~n", [timer:now_diff(now(), Then) / 1000000]),
     Result.
 
 
@@ -450,8 +480,6 @@ start() ->
 		    _ -> 
 			erlang:system_info(schedulers)
 	    end,
-    
-    Collectors = 2,
     Length = case init:get_argument(l) of
 		 {ok, Ls} ->
 		     case Ls of
@@ -476,7 +504,7 @@ start() ->
 	       _ -> 
 		   7
 	   end,
-    Variance = case init:get_argument(w) of
+    Variance = case init:get_argument(v) of
 		   {ok, Vs} ->
 		       case Vs of
 			   [[V]] ->
@@ -488,33 +516,60 @@ start() ->
 		   _ -> 
 		       0
 	       end,
-    Output = case init:get_argument(o) of
-		 {ok, _} ->
-		     true;
-		 _ -> false
-	     end,
-    Result = run(Datafile, Cores, Collectors, Window, Length, Prob, Variance),
-    io:format(standard_error, "Got: ~p tokens ~n", [dict:size(Result)]),
-    if Output == true ->
-	    io:format(standard_error, "*** Writing model to standard out *** ~n", []),
-	    dict:fold(fun (Word, Vector, _) ->
-			      io:format("~s,", [Word]),
-			      Indicies = lists:reverse(dict:fold(fun (Index, Value, Acc) ->
-									 [io_lib:format("~p:~p", [Index, Value])|Acc]
-								 end, [], Vector)),
-			      io:format("~s ~n", [string:join(Indicies, ",")])
-		      end, [], Result);
-       true ->
+    SemanticOutput = case init:get_argument(om) of
+			 {ok, Os} ->
+			     case Os of
+				 [[O]] ->
+				     {ok, O};
+				 [_] ->
+				     stdillegal("om"),
+				     halt()
+			     end;
+			 _ -> 
+			     error
+		     end,
+    IndexOutput = case init:get_argument(oi) of
+			 {ok, IOs} ->
+			     case IOs of
+				 [[IO]] ->
+				     {ok, IO};
+				 [_] ->
+				     stdillegal("oi"),
+				     halt()
+			     end;
+			 _ -> 
+			  error
+		     end,
+    if
+	Variance >= Prob ->
+	    stdillegal("v"), halt();
+	true -> ok
+    end,
+    Result = run(Datafile, Cores, 2, Window, Length, Prob, Variance),
+    io:format(standard_error, "*** Calculated ~p semantic vectors *** ~n", [dict:size(Result)]),
+    case SemanticOutput of
+	{ok, OutputFile} ->
+	    io:format(standard_error, "*** Writing model to '~s' *** ~n", [OutputFile]),
+	    write_model_to_file(OutputFile, Result);
+       error ->
+	    ok
+    end,
+    case IndexOutput of
+	{ok, IOut} ->
+	    io:format(standard_error, "*** Writing index vectors to '~s' *** ~n", [IOut]),
+	    write_index_to_file(IOut);
+	error ->
 	    ok
     end,
     halt().
 	
+
 stdwarn(Out) ->
     io:format(standard_error, " **** ~s **** ~n", [Out]),
     io:format(standard_error, "See tr -h for options ~n", []).
 
 stdillegal(Arg) ->
-    stdwarn(io_lib:format("Error: Missing argument to -~s", [Arg])).
+    stdwarn(io_lib:format("Error: Invalid argument(s) to -~s", [Arg])).
 
 show_help() ->
     io:format(standard_error,"~s
@@ -523,28 +578,34 @@ Example: ri -i ../data/brown.txt -w 2 -c 4 -l 4000 -p 7 -v 2
          ri -i ../data/brown.txt -w 2
          ri -i ../data/brown.txt -w 2 -o > model.txt
 
--i   [str()]
+-i   [input-doc]
      Input file. One document per line, words (tokens) are comma separated.
 
--o   []
-     Boolean flag. If set, a model will be written to stdout. (default: false)
+-im  [semantic-vectors-file, index-vectors-file]
+     Read already calculated semantic vectors and index vectors from files.
 
--w   [int()]
+-om  [file]
+     Write semantic vectors to file (default: false)
+
+-oi  [file]
+     Write index vectors to file (default: false)
+
+-w   [number]
      The number of items in each side of the sliding window (default: 2)
 
--c   [int()]
+-c   [cores]
      Number of parallell executions (default: ~p)
 
--l   [int()]
+-l   [number]
      Length of the index vector (default: 4000)
 
--p   [int()]
+-p   [number]
      Number of non negative bits in index vector (default: 7)
 
 -v   [number]
      Variance in the number of non negative bits. For example, 
-     setting -v to 2 gives 7 +- 2 non negative bits in index vector
-     (default: 0).
+     setting -v to 2 gives 7 +- 2 non negative bits in index vector. Must
+     be < -p (default: 0).
 ", [show_information(), erlang:system_info(schedulers)]).
 
 show_information() ->
@@ -552,22 +613,24 @@ show_information() ->
 All rights reserved ~s", [?DATA, ?MAJOR_VERSION, ?MINOR_VERSION, ?REVISION, ?AUTHOR]).
 
 test() ->
+    random:seed(now()),
     Vector0 = new_semantic_vector(),
     _Vector1 = new_semantic_vector(),
     _Vector2 = new_semantic_vector(),
 
-    Index0 = new_index_vector(1000, 7, 2),
-    Index1 = new_index_vector(1000, 7, 2),
-    _Index2 = new_index_vector(1000, 7, 2),
+    Index0 = new_index_vector(1000000, 7, 2),
+    Index1 = new_index_vector(1000000, 7, 2),
+    Index2 = new_index_vector(1000000, 7, 2),
 
     Vi0 = add_vectors(Vector0, Index0),
     Vi1 = add_vectors(Vi0, Index1),
+    Vi2 = add_vectors(Vi1, Index2),
     
-    Vi2 = add_vectors(Vector0, Index0),
-    Vi3 = add_vectors(Vector0, Index1),
+    Vi3 = add_vectors(Vector0, Index0),
+    Vi4 = add_vectors(Vector0, Index1),
 
     equal(Vi0, Vi1),
-    equal(Vi1, merge_semantic_vector(Vi2, Vi3)).
+    equal(Vi2, merge_semantic_vector(merge_semantic_vector(Vi3, Vi4), add_vectors(Vector0, Index2))).
     
 
 
