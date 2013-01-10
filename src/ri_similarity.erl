@@ -5,9 +5,10 @@
 	 minkowski/3,
 	 dot_product/2,
 	 magnitude/1,
-	 similarity/3,
-	 similarity/4,
-	 similar_to/3,
+	 cmp/3,
+	 cmp/4,
+	 to/3,
+	 to/4,
 	 concurrent_similar_to/4,
 	 similarity_calculation_process/5]).
 
@@ -21,10 +22,10 @@ euclidian(#semantic_vector{length=Length, values=A},
 						   0
 					   end,
 				  ValueB = case dict:find(Index, B) of
-					      {ok, ValueB0} ->
-						  ValueB0;
-					      error ->
-						  0
+					       {ok, ValueB0} ->
+						   ValueB0;
+					       error ->
+						   0
 					   end,
 				  Acc + math:pow(ValueA - ValueB, 2)
 			  end, 0, dict:fetch_keys(A) ++ dict:fetch_keys(B))).
@@ -78,7 +79,7 @@ magnitude(#semantic_vector{values=Vector}) ->
 %%
 %% Compare two semantic vectors
 %%
-similarity(A, B, Fun, Vectors) ->
+cmp(A, B, Fun, Vectors) ->
     {ok, SemanticVectorA} = ri_util:get_semantic_vector(A, Vectors),
     {ok, SemanticVectorB} = ri_util:get_semantic_vector(B, Vectors),
     Fun(SemanticVectorA, SemanticVectorB).
@@ -86,20 +87,20 @@ similarity(A, B, Fun, Vectors) ->
 %%
 %% Compare two semantic vectors using cosine similarity
 %%
-similarity(A, B, Vectors) ->
-    similarity(A, B, fun cosine/2, Vectors).
+cmp(A, B, Vectors) ->
+    cmp(A, B, fun cosine/2, Vectors).
 
 %%
 %% Get items similar to A
 %%
-similar_to(A, {Min, Max}, Vectors) when is_number(Min), 
+to(A, {Min, Max}, Vectors) when is_number(Min), 
 					is_number(Max)->
-    similar_to(A, fun (_, Similarity) ->
+    to(A, fun (_, Similarity) ->
 			  (Similarity =< Max) and (Similarity > Min)
 		  end, Vectors);
-similar_to(A, Fun, Vectors) when is_function(Fun)->
+to(A, Fun, Vectors) when is_function(Fun)->
     concurrent_similar_to(A, Fun, fun cosine/2, Vectors);
-similar_to(A, {Fun, Not}, Vectors) ->
+to(A, {Fun, Not}, Vectors) ->
     concurrent_similar_to(A, Fun, 
 			  fun (VectorA, VectorB) ->
 				  cosine(VectorA, VectorB) -
@@ -110,11 +111,13 @@ similar_to(A, {Fun, Not}, Vectors) ->
 					      1
 				      end
 			  end, Vectors);
-similar_to(A, Not, Vectors) ->
-    similar_to(A, { fun (_, _) ->
+to(A, Not, Vectors) ->
+    to(A, { fun (_, _) ->
 			    true
 		    end, Not}, Vectors).
 
+to(A, Max, Sim, Vectors) ->
+    lists:sublist(concurrent_similar_to(A, fun(_,_) -> true end, Sim, Vectors), Max).
 %%
 %% Calculate the similarity between A and all other Items
 %% Fun -> fun (Word, Similarity) -> boolean()
