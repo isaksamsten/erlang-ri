@@ -123,11 +123,11 @@ update_limit(Result, {Limit, Current}, Items, IndexVector, Pivot) ->
 %%
 %% Update Pivot (semantic vector) w.r.t. Item (index vector)
 %%
-update_pivot(Result, Pivot, Item, IndexVectorInfo) ->
-    IndexVector  = get_index_vector(Item, IndexVectorInfo),
+update_pivot(Result, Pivot, Item, #index_vector{length=Length} = IndexVectorInfo) ->
+    IndexVector = get_index_vector(Item, IndexVectorInfo),
     dict:update(Pivot, fun(PivotVector) ->
 			       add_vectors(PivotVector, IndexVector)
-		       end, new_semantic_vector(), Result).
+		       end, new_semantic_vector(Length), Result).
 
 %%
 %% Init a random vector of Length lenght and the Prob prob to
@@ -156,16 +156,18 @@ merge_semantic_vectors(VectorA, VectorB) ->
 %%
 %% Merge the semantic vectors for two Items
 %%
-merge_semantic_vector(VectorA, VectorB) ->
-    dict:merge(fun (_Key, ValueA, ValueB) ->
-		       ValueA + ValueB
-	       end, VectorA, VectorB).
+merge_semantic_vector(#semantic_vector{length=Length, values=VectorA}, 
+		      #semantic_vector{length=Length, values=VectorB}) ->
+    #semantic_vector{length=Length,
+		     values=dict:merge(fun (_Key, ValueA, ValueB) ->
+					       ValueA + ValueB
+				       end, VectorA, VectorB)}.
 
 %%
 %% Create a new semantic vector
 %%
-new_semantic_vector() ->   
-    dict:new().
+new_semantic_vector(Length) ->   
+    #semantic_vector{length=Length, values=dict:new()}.
     
 %%
 %% Generate an index vector
@@ -197,9 +199,10 @@ new_index_vector(Length, Values, Variance) ->
 %%
 %% VectorA -> {Length, dict() -> {Index, Value}}
 %%
-add_vectors(VectorA, VectorB) ->
-    lists:foldl(fun ({Index, Value}, Acc) ->
-			dict:update(Index, fun (Old) ->
-						   Old + Value
-					   end, Value, Acc)
-		end, VectorA, VectorB).
+add_vectors(#semantic_vector{length=Length, values=VectorA}, VectorB) ->
+    #semantic_vector{length=Length, 
+		     values=lists:foldl(fun ({Index, Value}, Acc) ->
+						dict:update(Index, fun (Old) ->
+									   Old + Value
+								   end, Value, Acc)
+					end, VectorA, VectorB)}.

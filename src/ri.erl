@@ -41,11 +41,10 @@ run(File, Cores, Collectors, Window, Length, Prob, Variance) ->
 run_experiment(Io, Cores, Collectors, Window, Length, Prob, Variance) ->
     catch stop(),
     init(),
-    Result = ri_update:spawn_vector_update_processes(Cores, Collectors, 
-						     Io, Window, #index_vector{length=Length, 
-									       prob=Prob, 
-									       variance=Variance}),
-    Result.
+    ri_update:spawn_vector_update_processes(Cores, Collectors, 
+					    Io, Window, #index_vector{length=Length, 
+								      prob=Prob, 
+								      variance=Variance}).
 
 
 %%

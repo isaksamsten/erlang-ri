@@ -1,6 +1,8 @@
 -module(ri_similarity).
-
+-include("ri.hrl").
 -export([cosine/2,
+	 euclidian/2,
+	 minkowski/3,
 	 dot_product/2,
 	 magnitude/1,
 	 similarity/3,
@@ -9,6 +11,42 @@
 	 concurrent_similar_to/4,
 	 similarity_calculation_process/5]).
 
+euclidian(#semantic_vector{length=Length, values=A},
+	  #semantic_vector{length=Length, values=B}) ->
+    math:sqrt(lists:foldl(fun(Index, Acc) ->
+				  ValueA = case dict:find(Index, A) of
+					       {ok, ValueA0} ->
+						   ValueA0;
+					       error ->
+						   0
+					   end,
+				  ValueB = case dict:find(Index, B) of
+					      {ok, ValueB0} ->
+						  ValueB0;
+					      error ->
+						  0
+					   end,
+				  Acc + math:pow(ValueA - ValueB, 2)
+			  end, 0, dict:fetch_keys(A) ++ dict:fetch_keys(B))).
+
+minkowski(#semantic_vector{length=Length, values=A},
+	  #semantic_vector{length=Length, values=B}, P) ->
+    math:pow(lists:foldl(fun(Index, Acc) ->
+				 ValueA = case dict:find(Index, A) of
+					      {ok, ValueA0} ->
+						  ValueA0;
+					      error ->
+						  0
+					  end,
+				 ValueB = case dict:find(Index, B) of
+					      {ok, ValueB0} ->
+						  ValueB0;
+					      error ->
+						  0
+					  end,
+				 Acc + math:pow(abs(ValueA - ValueB), P)
+			 end, 0, dict:fetch_keys(A) ++ dict:fetch_keys(B)), 1/P).
+				 
 cosine(A, B) ->
     case dot_product(A, B) of 
 	0.0 -> 0;
@@ -21,7 +59,8 @@ cosine(A, B) ->
 	     end
     end.
 
-dot_product(A, B) ->
+dot_product(#semantic_vector{values=A}, 
+	    #semantic_vector{values=B}) ->
     dict:fold(fun (Index, ValueA, Dot) ->
 		      case dict:find(Index, B) of
 			  {ok, ValueB} ->
@@ -31,7 +70,7 @@ dot_product(A, B) ->
 		      end
 	      end, 0, A).
 
-magnitude(Vector) ->		      
+magnitude(#semantic_vector{values=Vector}) ->		      
     math:sqrt(dict:fold(fun (_, Value, Acc) ->
 				Acc + (Value * Value)
 			end, 0, Vector)).

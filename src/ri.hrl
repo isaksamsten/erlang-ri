@@ -1,1 +1,2 @@
 -record(index_vector, {length, prob, variance}).
+-record(semantic_vector, {length, values}).
