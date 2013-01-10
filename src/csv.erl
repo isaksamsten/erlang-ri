@@ -40,7 +40,7 @@ reader(File) ->
     spawn_link(?MODULE, spawn_parser, [File]).
 
 spawn_parser(File) ->
-    case file:open(File, [raw, read]) of
+    case file:open(File, [raw, read, read_ahead]) of
 	{ok, Io} ->
 	    parse_incremental(Io);
 	_ ->
