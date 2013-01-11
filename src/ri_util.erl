@@ -1,6 +1,6 @@
 -module(ri_util).
-
--export([write_model_to_file/2,
+-include("ri.hrl").
+-export([write_model_to_file/3,
 	 write_index_to_file/1,
 	 get_semantic_vector/2]).
 
@@ -19,12 +19,13 @@ get_semantic_vector(Item, Vectors) ->
 %%
 %% Write model (Result) to File
 %%
-write_model_to_file(File, Result) ->
+write_model_to_file(File, Length, Result) ->
     Io = case file:open(File, [raw, write]) of
 	     {ok, Io0} -> Io0;
 	     error -> throw({error, file_not_found})
 	 end,
-    dict:fold(fun (Word, Vector, _) ->
+    file:write(Io, io_lib:format("header, length, ~p ~n", [Length])),
+    dict:fold(fun (Word, #semantic_vector{values=Vector}, _) ->
 		      file:write(Io, io_lib:format("\"~s\",", [Word])),
 		      case dict:size(Vector) of
 			  0 ->
@@ -32,7 +33,7 @@ write_model_to_file(File, Result) ->
 			  _ ->
 			      Indicies = lists:reverse(
 					   dict:fold(fun (Index, Value, Acc) ->
-							     [io_lib:format("~p:~p", [Index, Value])|Acc]
+							     [io_lib:format("~p,~p", [Index, Value])|Acc]
 						     end, [], Vector)),
 			      file:write(Io, io_lib:format("~s ~n", [string:join(Indicies, ",")]))
 		      end

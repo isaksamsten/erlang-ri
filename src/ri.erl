@@ -171,7 +171,7 @@ start() ->
     case SemanticOutput of
 	{ok, OutputFile} ->
 	    io:format(standard_error, "*** Writing model to '~s' *** ~n", [OutputFile]),
-	    ri_util:write_model_to_file(OutputFile, Result);
+	    ri_util:write_model_to_file(OutputFile, Length, Result);
        error ->
 	    ok
     end,

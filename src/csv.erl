@@ -1,4 +1,11 @@
-
+%%
+%% Very basic CSV parser of limited use.
+%%
+%% It can only handle one type of separators (,) and only one level of
+%% string nesting
+%%
+%% Author: Isak Karlsson <isak-kar@dsv.su.se>
+%%
 -module(csv).
 -compile(export_all).
 
@@ -87,32 +94,19 @@ parse_line([End], Str, Acc) ->
 	       _ -> % NOTE: The last line of the file
 		   [End|Str]
 	   end,		   
-    [lists:reverse(Str0)|Acc];
+    [string:strip(lists:reverse(Str0))|Acc];
+parse_line([$", $,|R], _, Acc) ->
+    parse_line(R, [], ["\""|Acc]);
+parse_line([$"|R], Str, Acc) ->
+    parse_string_item(R, Str, Acc);
 parse_line([$,|R], Str, Acc) ->
-    parse_line(R, [], [lists:reverse(Str)|Acc]);
+    parse_line(R, [], [string:strip(lists:reverse(Str))|Acc]);
 parse_line([I|R], Str, Acc) ->
     parse_line(R, [I|Str], Acc).
 
-
-to_repr(Str) ->
-    case is_numeric(Str) of
-	{true, Number} ->
-	    Number;
-	false ->
-	    list_to_atom(Str)
-    end.
-
-is_numeric(L) ->
-    Float = (catch erlang:list_to_float(L)),
-    Int = (catch erlang:list_to_integer(L)),
-    case is_number(Float) of
-	true ->
-	    {true, Float};
-	false ->
-	    case is_number(Int) of
-		true ->
-		    {true, Int};
-		false ->
-		    false
-	    end
-    end.
+parse_string_item([$", $,|R], Str, Acc) ->
+    parse_line(R, [], [string:strip(lists:reverse(Str))|Acc]);
+parse_string_item([$"|R], Str, Acc) ->
+    parse_line(R, [], [string:strip(lists:reverse(Str))|Acc]);
+parse_string_item([I|R], Str, Acc) ->
+    parse_string_item(R, [I|Str], Acc).
