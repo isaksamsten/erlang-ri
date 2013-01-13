@@ -48,7 +48,7 @@ reader(File) ->
     spawn_link(?MODULE, spawn_parser, [File]).
 
 spawn_parser(File) ->
-    case file:open(File, [raw, read, read_ahead]) of
+    case file:open(File, [read, read_ahead]) of
 	{ok, Io} ->
 	    parse_incremental(Io);
 	_ ->
@@ -56,19 +56,34 @@ spawn_parser(File) ->
     end.
 
 parse_incremental(Io) ->
+    ProcessFun = fun (Line, Acc) ->
+			 receive 
+			     {more, Parent} ->
+				 case Line of
+				     {newline, Item} ->
+					 Parent ! {ok, Parent, Item};
+				     _ ->
+					 Parent ! {eof, Parent}
+				 end
+			 end,
+			 Acc + 1
+		 end,
+    ecsv:process_csv_file_with(Io, ProcessFun, 0).
+
+parse_incremental(Io, Counter) ->
     case file:read_line(Io) of
 	{ok, Line} ->
+	    Item = parse_line(Line, []),
 	    receive
 		{more, Parent} ->
-		    Item = parse_line(Line, []),
 		    Parent ! {ok, Parent, Item},
-		    parse_incremental(Io)
+		    parse_incremental(Io, Counter + 1)
 	    end;
 	eof ->
 	    receive 
 		{more, Parent} ->
 		    Parent ! {eof, Parent},
-		    parse_incremental(Io)			
+		    parse_incremental(Io, Counter)			
 	    end;
 	{error, Reason} ->
 	    throw({error, Reason})
@@ -76,12 +91,18 @@ parse_incremental(Io) ->
 
 get_next_line(Pid) ->
     Self = self(),
+    Ref = monitor(process, Pid),
     Pid ! {more, Self},
     receive
 	{ok, Self, Item} ->
+	    demonitor(Ref),
 	    {ok, Item};
 	{eof, Self} ->
-	    eof
+	    demonitor(Ref),
+	    eof;
+	{'DOWN', Ref, _, _, _} ->
+	    demonitor(Ref),
+	    eof		
     end.
 	    
 

@@ -24,18 +24,18 @@ write_model_to_file(File, Length, Result) ->
 	     {ok, Io0} -> Io0;
 	     error -> throw({error, file_not_found})
 	 end,
-    file:write(Io, io_lib:format("header, length, ~p ~n", [Length])),
+    file:write(Io, io_lib:format("header,length,~p~n", [Length])),
     dict:fold(fun (Word, #semantic_vector{values=Vector}, _) ->
 		      file:write(Io, io_lib:format("\"~s\",", [Word])),
 		      case dict:size(Vector) of
 			  0 ->
-			      file:write(Io, io_lib:format("empty ~n", []));
+			      file:write(Io, io_lib:format("empty~n", []));
 			  _ ->
 			      Indicies = lists:reverse(
 					   dict:fold(fun (Index, Value, Acc) ->
 							     [io_lib:format("~p,~p", [Index, Value])|Acc]
 						     end, [], Vector)),
-			      file:write(Io, io_lib:format("~s ~n", [string:join(Indicies, ",")]))
+			      file:write(Io, io_lib:format("~s~n", [string:join(Indicies, ",")]))
 		      end
 	      end, [], Result),
     file:close(Io).
