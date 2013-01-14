@@ -33,7 +33,17 @@ run(File, Cores) ->
     wait_for_user_input().
 
 wait_for_user_input() ->
-    ok.
+    Command = io:get_line(">> "),
+    execute(split_to_atoms(Commands)).
+
+split_to_atoms(Commands) ->
+    split_to_atoms(Commands, []).
+
+split_to_atoms([Command|Rest], Acc) ->
+    split_to_atoms(Rest, [list_to_atom(Command)|Acc]);
+split_to_atoms([], Acc) ->
+    lists:reverse(Acc).
+
 
 parse_model_process(Parent, Io, Length) ->
     case csv:get_next_line(Io) of

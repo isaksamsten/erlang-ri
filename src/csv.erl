@@ -50,19 +50,23 @@ reader(File) ->
 spawn_parser(File) ->
     case file:open(File, [read, read_ahead]) of
 	{ok, Io} ->
-	    parse_incremental(Io);
+	    parse_incremental(Io, 0);
 	_ ->
 	    throw({error, file_not_found})
     end.
 
 parse_incremental(Io) ->
     ProcessFun = fun (Line, Acc) ->
-			 receive 
-			     {more, Parent} ->
-				 case Line of
-				     {newline, Item} ->
-					 Parent ! {ok, Parent, Item};
-				     _ ->
+			 case Line of
+			     {newline, Item} ->
+				 io:format("newline  ~p ~n", [Item]),
+				 receive 
+				     {more, Parent} ->
+					 Parent ! {ok, Parent, Item}
+				 end;
+			     _ ->
+				 receive
+				     {eof, Parent} ->
 					 Parent ! {eof, Parent}
 				 end
 			 end,
@@ -74,6 +78,7 @@ parse_incremental(Io, Counter) ->
     case file:read_line(Io) of
 	{ok, Line} ->
 	    Item = parse_line(Line, []),
+%	    io:format("newline ~p ~n", [Item]),
 	    receive
 		{more, Parent} ->
 		    Parent ! {ok, Parent, Item},
