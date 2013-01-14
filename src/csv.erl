@@ -9,43 +9,11 @@
 -module(csv).
 -compile(export_all).
 
-parse(file, File) ->
-    case file:open(File, [raw,read]) of
-	{ok, IO} ->
-	    parse(acc, IO, []);
-	_ ->
-	    throw({error, file_dont_exist})
-    end.
-parse(file, File, Fun) ->
-    case file:open(File, [raw,read]) of
-	{ok, Io} ->
-	    parse(call, Io, {0, Fun});
-	_ ->
-	    throw({error, file_dont_exist})
-    end;
-parse(acc, Io, Acc) ->
-    case file:read_line(Io) of
-	{ok, Line} ->
-	    parse(acc, Io, [parse_line(Line, [])| Acc]);
-	eof ->
-	    lists:reverse(Acc);
-	{error, Reason} ->
-	    throw({error, Reason})
-    end;
-parse(call, Io, {Id, Fun}) ->
-    case file:read_line(Io) of
-	{ok, Line} ->
-	    Fun(Id, parse_line(Line, [])),
-	    parse(call, Io, {Id + 1, Fun});
-	eof ->
-	    Fun(eof, []),
-	    ok;
-	{error, Reason} ->
-	    throw({error, Reason})
-    end.
-
+%%
+%% Spawn a 
+%%
 reader(File) ->
-    spawn_link(?MODULE, spawn_parser, [File]).
+    {csv_reader, spawn_link(?MODULE, spawn_parser, [File])}.
 
 spawn_parser(File) ->
     case file:open(File, [read, read_ahead]) of
@@ -81,7 +49,7 @@ parse_incremental(Io, Counter) ->
 %	    io:format("newline ~p ~n", [Item]),
 	    receive
 		{more, Parent} ->
-		    Parent ! {ok, Parent, Item},
+		    Parent ! {ok, Parent, Item, Counter},
 		    parse_incremental(Io, Counter + 1)
 	    end;
 	eof ->
@@ -94,14 +62,14 @@ parse_incremental(Io, Counter) ->
 	    throw({error, Reason})
     end.
 
-get_next_line(Pid) ->
+get_next_line({csv_reader, Pid}) ->
     Self = self(),
     Ref = monitor(process, Pid),
     Pid ! {more, Self},
     receive
-	{ok, Self, Item} ->
+	{ok, Self, Item, Id} ->
 	    demonitor(Ref),
-	    {ok, Item};
+	    {ok, Item, Id};
 	{eof, Self} ->
 	    demonitor(Ref),
 	    eof;

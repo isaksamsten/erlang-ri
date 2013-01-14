@@ -33,8 +33,18 @@ run(File, Cores) ->
     wait_for_user_input().
 
 wait_for_user_input() ->
-    Command = io:get_line(">> "),
-    execute(split_to_atoms(Commands)).
+    Commands = io:get_line(">> "),
+    try 
+	execute(split_to_atoms(Commands))
+    catch
+	throw:X ->
+	    io:format("Invalid input: ~p ~n", [X])
+    end,	
+    wait_for_user_input().
+
+execute([similarity, X, Y]) ->
+    Sim = ri_similarity:cmp(X, Y, semantic_vectors),
+    io:format("~p~n", [Sim]).
 
 split_to_atoms(Commands) ->
     split_to_atoms(Commands, []).
@@ -47,7 +57,7 @@ split_to_atoms([], Acc) ->
 
 parse_model_process(Parent, Io, Length) ->
     case csv:get_next_line(Io) of
-	{ok, Item} ->
+	{ok, Item, _} ->
 	    {Word, Vector} = parse_item(Item),
 	    ets:insert(semantic_vectors, {Word, #semantic_vector{length=Length, values=Vector}}),
 	    parse_model_process(Parent, Io, Length);
@@ -67,7 +77,7 @@ collect_parse_model_processes(Self, Cores) ->
 
 parse_header(Io) ->
     case csv:get_next_line(Io) of
-	{ok, Item} ->
+	{ok, Item, _} ->
 	    case parse_header_item(Item, []) of
 		[Len] ->
 		    Len;

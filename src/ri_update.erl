@@ -13,7 +13,7 @@
 vector_update_process(Parent, Io, Window, IndexVector, Result) ->
     random:seed(erlang:now()),
     case csv:get_next_line(Io) of
-	{ok, Item} ->
+	{ok, Item, _} ->
 	    Result0 = update_item(Result, Item, Window, IndexVector),
 	    vector_update_process(Parent, Io, Window, IndexVector, Result0);
 	eof ->
