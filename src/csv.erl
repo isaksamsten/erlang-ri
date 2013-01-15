@@ -46,7 +46,6 @@ parse_incremental(Io, Counter) ->
     case file:read_line(Io) of
 	{ok, Line} ->
 	    Item = parse_line(Line, []),
-%	    io:format("newline ~p ~n", [Item]),
 	    receive
 		{more, Parent} ->
 		    Parent ! {ok, Parent, Item, Counter},
@@ -87,8 +86,13 @@ parse_line([End], Str, Acc) ->
 		   Str;
 	       _ -> % NOTE: The last line of the file
 		   [End|Str]
-	   end,		   
-    [string:strip(lists:reverse(Str0))|Acc];
+	   end,	
+    case Str0 of
+	[] ->
+	    Acc;
+	_ ->
+	    [string:strip(lists:reverse(Str0))|Acc]
+    end;
 parse_line([$", $,|R], _, Acc) ->
     parse_line(R, [], ["\""|Acc]);
 parse_line([$"|R], Str, Acc) ->

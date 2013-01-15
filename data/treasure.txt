@@ -8,6 +8,7 @@ And,buccaneers,buried,gold
 And,old,romance,retold
 Exactly,ancient,way
 Can,please,pleased,old
+Can,please,pleased,old
 The,wiser,youngsters,today
 PART,ONE,The,Old,Buccaneer
 The,Old,Sea,dog,Admiral,Benbow

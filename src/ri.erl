@@ -30,9 +30,9 @@ stop() ->
 %%
 %% Running a file of documents
 %%
-run(File, Cores, Collectors, Window, Length, Prob, Variance) ->
+run(File, Cores, Window, Length, Prob, Variance) ->
     Pid = csv:reader(File),
-    run_experiment(Pid, Cores, Collectors, Window, Length, Prob, Variance).
+    run_experiment(Pid, Cores,  Window, Length, Prob, Variance).
     
 
 %%
@@ -66,7 +66,13 @@ start() ->
     end,
 
     InputFile = get_argument(i, Return, Illegal, Warn("Input file required")),
-    Window   = get_argument(w, fun list_to_integer/1, Illegal, Default(2)),
+    Window   = get_argument(w, fun(Value) ->
+				       try list_to_integer(Value)
+				       catch
+					   _:_ ->
+					       list_to_atom(Value)
+				       end					   
+			       end, Illegal, Default(2)),
     Cores    = get_argument(c, fun list_to_integer/1, Illegal, Default(erlang:system_info(schedulers))),
     Length   = get_argument(l, fun list_to_integer/1, Illegal, Default(4000)),
     Prob     = get_argument(p, fun list_to_integer/1, Illegal, Default(7)),
@@ -106,7 +112,7 @@ start() ->
     halt().
 
 get_argument(Arg, Fun0, Fun1, Fun2) ->	
-    case init:get_argument(w) of
+    case init:get_argument(Arg) of
 	{ok, Ws} ->
 	    case Ws of
 		[[W]] ->
@@ -148,8 +154,8 @@ Example: ri -i ../data/brown.txt -w 2 -c 4 -l 4000 -p 7 -v 2
 
 -w   [number | dv | iv]
      'number': The number of items in each side of the sliding window
-     'dv':     Document as index vector for each item in the document
-     'iv':     Each item in a document as index vector for the document
+     'doc':    Document as index vector for each item in the document
+     'item':   Each item in a document as index vector for the document
      (default: 2)
 
 -c   [cores]

@@ -93,10 +93,9 @@ cmp(A, B, Vectors) ->
 %%
 %% Get items similar to A
 %%
-to(A, {Min, Max}, Vectors) when is_number(Min), 
-					is_number(Max)->
+to(A, Min, Vectors) when is_number(Min) ->
     to(A, fun (_, Similarity) ->
-			  (Similarity =< Max) and (Similarity > Min)
+			  Similarity > Min
 		  end, Vectors);
 to(A, Fun, Vectors) when is_function(Fun)->
     concurrent_similar_to(A, Fun, fun cosine/2, Vectors);
