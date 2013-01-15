@@ -23,25 +23,6 @@ spawn_parser(File) ->
 	    throw({error, file_not_found})
     end.
 
-parse_incremental(Io) ->
-    ProcessFun = fun (Line, Acc) ->
-			 case Line of
-			     {newline, Item} ->
-				 io:format("newline  ~p ~n", [Item]),
-				 receive 
-				     {more, Parent} ->
-					 Parent ! {ok, Parent, Item}
-				 end;
-			     _ ->
-				 receive
-				     {eof, Parent} ->
-					 Parent ! {eof, Parent}
-				 end
-			 end,
-			 Acc + 1
-		 end,
-    ecsv:process_csv_file_with(Io, ProcessFun, 0).
-
 parse_incremental(Io, Counter) ->
     case file:read_line(Io) of
 	{ok, Line} ->
