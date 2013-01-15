@@ -38,134 +38,55 @@ run(File, Cores, Collectors, Window, Length, Prob, Variance) ->
 %%
 %% Run a list of lists
 %%
-run_experiment(Io, Cores, Collectors, Window, Length, Prob, Variance) ->
+run_experiment(Io, Cores, Window, Length, Prob, Variance) ->
     catch stop(),
     init(),
-    ri_update:spawn_vector_update_processes(Cores, Collectors, 
-					    Io, Window, #index_vector{length=Length, 
-								      prob=Prob, 
-								      variance=Variance}).
+    ri_update:spawn_vector_update_processes(#ri_conf{file=Io,
+						     window=Window,
+						     cores = Cores},
+					    #index_vector{length=Length, 
+							  prob=Prob, 
+							  variance=Variance}).
 
 
 %%
 %% Entry for the command line interface
 %%
 start() ->
+    Illegal = fun(Arg) -> stdillegal(Arg) end,
+    Return = fun(V) -> V end,
+    Default = fun(V) -> fun() -> V end end,
+    Warn    = fun(V) -> fun() -> stdwarn(V) end end,
+
     case init:get_argument(h) of
 	{ok, _} ->
 	    show_help(),
 	    halt();
 	_ -> true
     end,
-    Datafile = case init:get_argument(i) of
-		   {ok, Files} ->
-		       case Files of
-			   [[File]] ->
-			       File;
-			   [_] ->
-			       stdillegal("i"),
-			       halt()
-		       end;
-		   _ ->
-		       stdwarn("Input dataset is required"),
-		       halt()
-	       end,
-    Window = case init:get_argument(w) of
-		    {ok, Ws} ->
-			case Ws of
-			    [[W]] ->
-				list_to_integer(W);
-			    [_] ->
-				stdillegal("w"),
-				halt()
-			end;
-		    _ -> 
-			2
-	     end,
-    Cores = case init:get_argument(c) of
-		    {ok, Cs} ->
-			case Cs of
-			    [[C]] ->
-				list_to_integer(C);
-			    [_] ->
-				stdillegal("c"),
-				halt()
-			end;
-		    _ -> 
-			erlang:system_info(schedulers)
-	    end,
-    Length = case init:get_argument(l) of
-		 {ok, Ls} ->
-		     case Ls of
-			 [[L]] ->
-			     list_to_integer(L);
-			 [_] ->
-			     stdillegal("l"),
-			     halt()
-		     end;
-		 _ -> 
-		     4000
-	     end,
-    Prob = case init:get_argument(p) of
-	       {ok, Ps} ->
-		   case Ps of
-		       [[P]] ->
-			   list_to_integer(P);
-		       [_] ->
-			   stdillegal("p"),
-			   halt()
-		   end;
-	       _ -> 
-		   7
-	   end,
-    Variance = case init:get_argument(v) of
-		   {ok, Vs} ->
-		       case Vs of
-			   [[V]] ->
-			       list_to_integer(V);
-			   [_] ->
-			       stdillegal("v"),
-			       halt()
-		       end;
-		   _ -> 
-		       0
-	       end,
-    SemanticOutput = case init:get_argument(om) of
-			 {ok, Os} ->
-			     case Os of
-				 [[O]] ->
-				     {ok, O};
-				 [_] ->
-				     stdillegal("om"),
-				     halt()
-			     end;
-			 _ -> 
-			     error
-		     end,
-    IndexOutput = case init:get_argument(oi) of
-			 {ok, IOs} ->
-			     case IOs of
-				 [[IO]] ->
-				     {ok, IO};
-				 [_] ->
-				     stdillegal("oi"),
-				     halt()
-			     end;
-			 _ -> 
-			  error
-		     end,
+
+    InputFile = get_argument(i, Return, Illegal, Warn("Input file required")),
+    Window   = get_argument(w, fun list_to_integer/1, Illegal, Default(2)),
+    Cores    = get_argument(c, fun list_to_integer/1, Illegal, Default(erlang:system_info(schedulers))),
+    Length   = get_argument(l, fun list_to_integer/1, Illegal, Default(4000)),
+    Prob     = get_argument(p, fun list_to_integer/1, Illegal, Default(7)),
+    Variance = get_argument(v, fun list_to_integer/1, Illegal, Default(0)),
+    SemanticOutput = get_argument(om, fun(V) -> {ok, V} end, Illegal, Default(error)),
+    IndexOutput = get_argument(om, fun(V) -> {ok, V} end, Illegal, Default(error)),
+
+
     if
 	Variance >= Prob ->
 	    stdillegal("v"), halt();
 	true -> ok
     end,
 
-    io:format(standard_error, "*** Running '~p' on ~p core(s) *** ~n", [Datafile, Cores]),
+    io:format(standard_error, "*** Running '~p' on ~p core(s) *** ~n", [InputFile, Cores]),
     io:format(standard_error, "*** Sliding window: ~p, Index vector: ~p, Non zero bits: ~p+-~p *** ~n",
 	      [Window, Length, Prob, Variance]),
 
     Then = now(),    
-    Result = run(Datafile, Cores, 2, Window, Length, Prob, Variance),
+    Result = run(InputFile, Cores, Window, Length, Prob, Variance),
     io:format(standard_error, "*** Calculated ~p semantic vectors in ~p second(s)*** ~n", 
 	      [dict:size(Result), timer:now_diff(now(), Then) / 1000000]),
     case SemanticOutput of
@@ -183,7 +104,19 @@ start() ->
 	    ok
     end,
     halt().
-	
+
+get_argument(Arg, Fun0, Fun1, Fun2) ->	
+    case init:get_argument(w) of
+	{ok, Ws} ->
+	    case Ws of
+		[[W]] ->
+		    Fun0(W);
+		[_] ->
+		    Fun1(Arg)
+	    end;
+	_ -> 
+	    Fun2()
+    end.
 
 stdwarn(Out) ->
     io:format(standard_error, " **** ~s **** ~n", [Out]),
@@ -211,8 +144,13 @@ Example: ri -i ../data/brown.txt -w 2 -c 4 -l 4000 -p 7 -v 2
 -oi  [file]
      Write index vectors to file (default: false)
 
--w   [number]
-     The number of items in each side of the sliding window (default: 2)
+-is  Read a model for inspection (default: false)
+
+-w   [number | dv | iv]
+     'number': The number of items in each side of the sliding window
+     'dv':     Document as index vector for each item in the document
+     'iv':     Each item in a document as index vector for the document
+     (default: 2)
 
 -c   [cores]
      Number of parallell executions (default: ~p)

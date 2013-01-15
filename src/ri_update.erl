@@ -1,8 +1,8 @@
 %% Copyright Isak Karlsson <isak-kar@dsv.su.se>
 -module(ri_update).
--export([vector_update_process/5,
-	 vector_update_collector_process/5,
-	 spawn_vector_update_processes/5]).
+-export([vector_update_process/4,
+	 vector_update_collector_process/4,
+	 spawn_vector_update_processes/2]).
 	 
 -include("ri.hrl").
 
@@ -10,12 +10,17 @@
 %% Process that updates an item (concurrently), by reading a new line
 %% from Io.
 %%
-vector_update_process(Parent, Io, Window, IndexVector, Result) ->
+vector_update_process(Parent, #ri_conf{file=Io, window=Window} = RiConf, IndexVector, Result) ->
     random:seed(erlang:now()),
     case csv:get_next_line(Io) of
 	{ok, Item, _} ->
-	    Result0 = update_item(Result, Item, Window, IndexVector),
-	    vector_update_process(Parent, Io, Window, IndexVector, Result0);
+	    case Window of
+		X when is_number(X) ->
+		    Result0 = update_item(Result, Item, RiConf, IndexVector),
+		    vector_update_process(Parent, RiConf, IndexVector, Result0);
+		_ ->
+		    ok
+	    end;
 	eof ->
 	    Parent ! {done, self(), Parent, Result}
     end.
@@ -24,20 +29,20 @@ vector_update_process(Parent, Io, Window, IndexVector, Result) ->
 %% Either spawn new vector_update_processes if Childrens == 2 otherwise,
 %% call spawn_vector_update_process
 %%
-vector_update_collector_process(Parent, Io, Window, IndexVector, Childrens) ->
+vector_update_collector_process(Parent, RiConf, IndexVector, Childrens) ->
     Self = self(),
     case Childrens of
 	X when X < 2 ->
-	    spawn_link(?MODULE, vector_update_process, [Self, Io, Window, IndexVector, dict:new()]),
+	    spawn_link(?MODULE, vector_update_process, [Self, RiConf, IndexVector, dict:new()]),
 	    Result = wait_for_vector_updates(Self, Childrens, dict:new()),
 	    Parent ! {done, Self, Parent, Result};
 	2 ->
-	    spawn_link(?MODULE, vector_update_process, [Self, Io, Window, IndexVector, dict:new()]),
-	    spawn_link(?MODULE, vector_update_process, [Self, Io, Window, IndexVector, dict:new()]),
+	    spawn_link(?MODULE, vector_update_process, [Self, RiConf, IndexVector, dict:new()]),
+	    spawn_link(?MODULE, vector_update_process, [Self, RiConf, IndexVector, dict:new()]),
 	    Result = wait_for_vector_updates(Self, Childrens, dict:new()),
 	    Parent ! {done, Self, Parent, Result};
 	X when X > 2 ->
-	    Result = spawn_vector_update_processes(Childrens, 2, Io, Window, IndexVector),
+	    Result = spawn_vector_update_processes(RiConf, IndexVector),
 	    Parent ! {done, Self, Parent, Result}
     end.
 
@@ -45,12 +50,12 @@ vector_update_collector_process(Parent, Io, Window, IndexVector, Childrens) ->
 %% Spawn a Cores number of "vector_update_process"
 %% that can receive Items for processing
 %%
-spawn_vector_update_processes(Cores, Collectors, Io, Window, IndexVector) ->
+spawn_vector_update_processes(#ri_conf{cores=Cores} = RiConf, IndexVector) ->
     Self = self(),
-    Childrens = round(Cores / Collectors),
-    spawn_link(?MODULE, vector_update_collector_process,[Self, Io, Window, IndexVector, Childrens]),
-    spawn_link(?MODULE, vector_update_collector_process,[Self, Io, Window, IndexVector, Childrens]),
-    wait_for_vector_updates(Self, Collectors, dict:new()).
+    Childrens = round(Cores / 2),
+    spawn_link(?MODULE, vector_update_collector_process,[Self, RiConf, IndexVector, Childrens]),
+    spawn_link(?MODULE, vector_update_collector_process,[Self, RiConf, IndexVector, Childrens]),
+    wait_for_vector_updates(Self, 2, dict:new()).
 
 %%
 %% Wait for Cores messages to be sent to Self in the form of: {done,
@@ -74,16 +79,16 @@ wait_for_vector_updates(Self, Cores, Result) ->
 %% Update an item, using a window length of Window
 %% a random index vector or Length
 %%
-update_item(Result, Items, Window, IndexVector) ->
-    update_item(Result, Items, Window, IndexVector, queue:new()).
-update_item(Result, Items, Window, IndexVector, Queue) ->
+update_item(Result, Items, RiConf, IndexVector) ->
+    update_item(Result, Items, RiConf, IndexVector, queue:new()).
+update_item(Result, Items, #ri_conf{window=Window} = RiConf, IndexVector, Queue) ->
     case Items of
 	[] ->
 	    Result;
 	[Pivot|Rest] ->
 	    Result0 = update_all(Result, queue:to_list(Queue), IndexVector, Pivot),
 	    Result1 = update_limit(Result0, {Window, 0}, Rest, IndexVector, Pivot),
-	    update_item(Result1, Rest, Window, IndexVector, case queue:len(Queue) >= Window of
+	    update_item(Result1, Rest, RiConf, IndexVector, case queue:len(Queue) >= Window of
 								true->
 								    {_, Old} = queue:out(Queue),
 								    queue:in(Pivot, Old);
