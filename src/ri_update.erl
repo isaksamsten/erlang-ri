@@ -46,7 +46,7 @@ vector_update_collector_process(Parent, RiConf, IndexVector, Childrens) ->
 	    Result = wait_for_vector_updates(Self, Childrens, dict:new()),
 	    Parent ! {done, Self, Parent, Result};
 	X when X > 2 ->
-	    Result = spawn_vector_update_processes(RiConf, IndexVector),
+	    Result = spawn_vector_update_processes(RiConf#ri_conf{cores=Childrens}, IndexVector),
 	    Parent ! {done, Self, Parent, Result}
     end.
 
