@@ -1,5 +1,5 @@
 -module(ri).
--compile(export_all).
+-export([main/1]).
 
 -define(DATA, "2013-01-07").
 -define(MAJOR_VERSION, 0).
@@ -17,7 +17,9 @@
 %% must be fixed.
 %%
 init() ->
-    ets:new(index_vectors, [public, named_table, {write_concurrency, true}, {read_concurrency, true}]),
+    ets:new(index_vectors, [public, named_table, 
+			    {write_concurrency, true}, 
+			    {read_concurrency, true}]),
     ok.
 
 %%
@@ -27,6 +29,9 @@ stop() ->
     ets:delete(index_vectors),
     ok.	 
 
+%%
+%% Defines the spec() for the command line interface
+%%
 cmd_spec() ->
     [{input_file,     $i,          "input",   string, 
       "Input file consisting of one document per line"},
@@ -44,9 +49,9 @@ cmd_spec() ->
       "Show the application version"},
      {window,         $w,          "window",  {integer, 2},
       "Set the size of the sliding window"},
-     {reduce,         $r,          "reduce",  {boolean, false},
+     {reduce,         $r,          "reduce",  undefined,
       "Use the items as the index vector for the document"},
-     {item,           undefined,   "item",    {boolean, false},
+     {item,           undefined,   "item",    undefined,
       "Use the document as index vector for each item"},
      {cores,          $c,          "cores",   {integer, erlang:system_info(schedulers)},
       "Number of parallell executions"},
@@ -80,9 +85,13 @@ run_experiment(Io, Cores, Window, Length, Prob, Variance) ->
 							  prob=Prob, 
 							  variance=Variance}).
 
+%%
+%% Halts the program if illegal arguments are supplied
+%%
 illegal() ->
     getopt:usage(cmd_spec(), "ri"),
     halt().
+
 %%
 %% Entry for the command line interface
 %%
@@ -94,15 +103,15 @@ main(Args) ->
 		      illegal()		      
 	      end,
 
-    case getsopt(help, Options) of 
+    case has_opt(help, Options) of 
 	true -> illegal(); 
 	false -> ok 
     end,
-    case getsopt(version, Options) of 
+    case has_opt(version, Options) of 
 	true -> io:format("~s", [show_information()]), halt();
 	_ -> ok end,
 
-    case getsopt(load, Options) of
+    case has_opt(load, Options) of
 	true ->
 	    load_model(Options);
 	false ->
@@ -110,31 +119,34 @@ main(Args) ->
     end.
 	    
 load_model(Options) ->
-    InputFile = getopt(input_file, fun illegal/0, Options),
-    ri_parser:run(InputFile, getopt(cores, fun illegal/0, Options)).
+    InputFile = get_opt(input_file, fun illegal/0, Options),
+    ri_parser:run(InputFile, get_opt(cores, fun illegal/0, Options)).
 
 generate_model(Options) ->
-    InputFile = getopt(input_file, fun illegal/0, Options),
-    Window = case getopt(reduce, fun illegal/0, Options) of
+    InputFile = get_opt(input_file, fun illegal/0, Options),
+    Window = case has_opt(reduce, Options) of
 		 true -> doc;
-		 false -> case  getopt(item, fun illegal/0, Options) of
+		 false -> case  has_opt(item, Options) of
 			      true -> item;
-			      false -> getopt(window, fun illegal/0, Options)
+			      false -> get_opt(window, fun illegal/0, Options)
 			  end
 	     end,
-    Cores = getopt(cores, fun illegal/0, Options),
-    Length = getopt(length, fun illegal/0, Options),
-    Prob = getopt(prob, fun illegal/0, Options),
-    Variance = getopt(variance, fun illegal/0, Options),
+    Cores = get_opt(cores, fun illegal/0, Options),
+    Length = get_opt(length, fun illegal/0, Options),
+    Prob = get_opt(prob, fun illegal/0, Options),
+    Variance = get_opt(variance, fun illegal/0, Options),
 
     Outputs = try 
-		  merge_opts(getopts([output_model, output_index, output_reduced], Options), Options)
+		  merge_opts(get_opts([output_model, output_index, output_reduced], Options), 
+			     output, Options)
 	      catch
 		  _:_ ->
+		      io:format("*** Error: To few files (or to many output models)"),
 		      illegal()
 	      end,
     if
 	Variance >= Prob ->
+	    io:format("*** Error: Variance cannot be larger than the number of non-negative bits ~n"),
 	    illegal();
 	true -> ok
     end,
@@ -148,28 +160,46 @@ generate_model(Options) ->
     io:format(standard_error, "*** Calculated ~p semantic vectors in ~p second(s)*** ~n", 
 	      [dict:size(Result), timer:now_diff(now(), Then) / 1000000]),
 
-
-    write_files(Outputs, Length, Result).
-
-write_files([], _, _) ->
-    ok;
-write_files([{output_model, File}|Rest], Length, Result) ->
-    io:format(standard_error, "*** Writing model to '~s' *** ~n", [File]),
-    ri_util:write_model_to_file(File, Length, Result),
-    write_files(Rest, Length, Result);
-write_files([{output_index, File}|Rest], L, R) ->
-    io:format(standard_error, "*** Writing index vectors to '~s' *** ~n", [File]),
-    ri_util:write_index_to_file(File),
-    write_files(Rest, L, R);
-write_files([{output_reduced, File}|Rest], Length, Result) ->
-    io:format(standard_error, "*** Writing reduced model to '~s' *** ~n", [File]),
-    ri_util:write_reduced_to_file(File, Length, Result),
-    write_files(Rest, Length, Result).
-
-
+    Then0 = now(),
+    write_models(Outputs, Length, Result),
+    io:format(standard_error, "*** Wrote ~p models in ~p second(s)*** ~n", 
+	      [length(Outputs), timer:now_diff(now(), Then0) / 1000000]).
     
 
-getopt(Arg, Fun1, {Options, _}) ->	
+
+
+write_models(Models, Length, Result) ->
+    Self = self(),
+    lists:foreach(fun ({output_model, File}) ->
+			  io:format(standard_error, "*** Writing model to '~s' *** ~n", [File]),
+			  spawn_link(fun() ->
+					     ri_util:write_model_to_file(File, Length, Result),
+					     Self ! done
+				     end);
+		      ({output_index, File}) ->
+			  io:format(standard_error, "*** Writing index vectors to '~s' *** ~n", [File]),
+			  spawn_link(fun() ->
+					     ri_util:write_index_to_file(File),
+					     Self ! done
+				     end);
+		      ({output_reduced, File}) ->
+			  io:format(standard_error, "*** Writing reduced model to '~s' *** ~n", [File]),
+			  spawn_link(fun() ->
+					     ri_util:write_reduced_to_file(File, Length, Result),
+					     Self ! done
+				     end)
+		  end, Models),
+    lists:foreach(fun (_) ->
+			  receive
+			      done  ->
+				  ok
+			  end
+		  end, lists:seq(1, length(Models))).			       
+
+%%
+%% Get command line option Arg, calling Fun1 if not found
+%%	     
+get_opt(Arg, Fun1, {Options, _}) ->	
     case lists:keyfind(Arg, 1, Options) of
 	{Arg, Ws} ->
 	    Ws;
@@ -177,34 +207,36 @@ getopt(Arg, Fun1, {Options, _}) ->
 	    Fun1()
     end.
 
-getsopt(Arg, {Options, _ }) ->
+%%
+%% Return true if Arg exist
+%%
+has_opt(Arg, {Options, _ }) ->
     lists:any(fun (K) ->
 		      K == Arg
 	      end, Options).
 
-getopt(Arg, {Options,_}) ->
-    case lists:keyfind(Arg, 1, Options) of
-	{Arg, Ws} ->
-	    Ws;
-	false ->
-	    false
-    end.
 
-getopts(Match, {Options, _}) ->
+%%
+%% Get all options from the list
+%%
+get_opts(Match, {Options, _}) ->
     Match0 = sets:from_list(Match),
     lists:filter(fun (Option) ->
 			 sets:is_element(Option, Match0)
 		 end, Options).
 
-merge_opts(Matches, {Options, _}) ->
+%%
+%% Merge Matches with options found with key Key
+%%
+merge_opts(Matches, Key, {Options, _}) ->
     lists:zip(Matches, lists:reverse(lists:foldl(fun (O, Acc) ->
 							 case O of
-							     {output, File} ->
+							     {Key, File} ->
 								 [File|Acc];
 							     _ -> Acc
 							 end
 						 end, [], Options))).
 
-show_information() ->
-    io_lib:format("Random index, Version (of ~s) ~p.~p.~s
-All rights reserved ~s", [?DATA, ?MAJOR_VERSION, ?MINOR_VERSION, ?REVISION, ?AUTHOR]).
+show_information() -> 
+    io_lib:format("Random index, Version (of ~s) ~p.~p.~s ~nAll rights reserved ~s", 
+		  [?DATA, ?MAJOR_VERSION, ?MINOR_VERSION, ?REVISION, ?AUTHOR]).

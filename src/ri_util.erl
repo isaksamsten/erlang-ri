@@ -48,6 +48,7 @@ write_reduced_to_file(File, Length, Result) ->
 	 end,
     file:write(Io, io_lib:format("~s~n", [string:join([io_lib:format("~p", [S]) || S <- lists:seq(1, Length)], ",")])),
     dict:fold(fun (Doc, #semantic_vector{values=Vector}, _) ->
+		      file:write(Io, io_lib:format("~p", [Doc])),
 		      Values = lists:map(fun(Index) ->
 						 case dict:find(Index, Vector) of
 						     {ok, Value} ->
@@ -60,12 +61,6 @@ write_reduced_to_file(File, Length, Result) ->
 	      end, [], Result),
     file:close(Io).
 		      
-				
-				
-					    
-					    
-		 
-
 %%
 %% Write the random index to File
 %%

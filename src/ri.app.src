@@ -9,6 +9,5 @@
 		  getopt
                  ]},
   {mod, { ri, []}},
-  {env, []},
-  {escript_emu_args, "%%! -smp auto\n"}
+  {env, []}
  ]}.

@@ -38,7 +38,7 @@ wait_for_user_input(R) ->
 	execute(string:tokens(Commands, ", \n"), R)
     catch
 	_:X ->
-	    io:format("Invalid input: ~p ~n", [X])
+	    io:format("Error: ~p ~n", [X]),
     end,	
     wait_for_user_input(R).
 
@@ -53,14 +53,12 @@ execute(["to", Word, Min], R) ->
 execute(["halt"], _) ->
     halt().
 
-
-
-
 parse_model_process(Parent, Io, Length, Acc) ->
     case csv:get_next_line(Io) of
 	{ok, Item, _} ->
 	    {Word, Vector} = parse_item(Item),
-	    parse_model_process(Parent, Io, Length, [{Word, #semantic_vector{length=Length, values=Vector}}|Acc]);
+	    parse_model_process(Parent, Io, Length, 
+				[{Word, #semantic_vector{length=Length, values=Vector}}|Acc]);
 	eof ->
 	    Parent ! {done, Parent, Acc}
     end.
