@@ -25,53 +25,53 @@ run(File, Cores) ->
     Then = now(),
     Self = self(),
     lists:foreach(fun (_) ->
-			  spawn_link(?MODULE, parse_model_process, [Self, Io, Length])
+			  spawn_link(?MODULE, parse_model_process, [Self, Io, Length, []])
 		  end, lists:seq(1, Cores)),
-    collect_parse_model_processes(Self, Cores),
+    R = collect_parse_model_processes(Self, Cores, []),
     io:format(standard_error, "*** Read model in ~p second(s) *** ~n", 
 	      [timer:now_diff(now(), Then) / 1000000]),
-    wait_for_user_input().
+    wait_for_user_input(dict:from_list(R)).
 
-wait_for_user_input() ->
+wait_for_user_input(R) ->
     Commands = io:get_line(">> "),
     try 
-	execute(split_to_atoms(Commands))
+	execute(string:tokens(Commands, ", \n"), R)
     catch
-	throw:X ->
+	_:X ->
 	    io:format("Invalid input: ~p ~n", [X])
     end,	
-    wait_for_user_input().
+    wait_for_user_input(R).
 
-execute([similarity, X, Y]) ->
-    Sim = ri_similarity:cmp(X, Y, semantic_vectors),
-    io:format("~p~n", [Sim]).
+execute(["cmp", X, Y], R) ->
+    Sim = ri_similarity:cmp(X, Y, R),
+    io:format("~p~n", [Sim]);
+execute(["to", Word, Min], R) ->
+    SimilarTo = ri_similarity:to(Word, list_to_float(Min), R),
+    lists:foreach(fun ({Cmp, Sim}) ->
+			  io:format("~s\t~p ~n", [Cmp, Sim])
+		  end, SimilarTo);
+execute(["halt"], _) ->
+    halt().
 
-split_to_atoms(Commands) ->
-    split_to_atoms(Commands, []).
-
-split_to_atoms([Command|Rest], Acc) ->
-    split_to_atoms(Rest, [list_to_atom(Command)|Acc]);
-split_to_atoms([], Acc) ->
-    lists:reverse(Acc).
 
 
-parse_model_process(Parent, Io, Length) ->
+
+parse_model_process(Parent, Io, Length, Acc) ->
     case csv:get_next_line(Io) of
 	{ok, Item, _} ->
 	    {Word, Vector} = parse_item(Item),
-	    ets:insert(semantic_vectors, {Word, #semantic_vector{length=Length, values=Vector}}),
-	    parse_model_process(Parent, Io, Length);
+	    parse_model_process(Parent, Io, Length, [{Word, #semantic_vector{length=Length, values=Vector}}|Acc]);
 	eof ->
-	    Parent ! {done, Parent}
+	    Parent ! {done, Parent, Acc}
     end.
 
-collect_parse_model_processes(Self, Cores) ->
+collect_parse_model_processes(Self, Cores, Acc) ->
     if Cores == 0 ->
-	    ok;
+	    Acc;
        true ->
 	    receive
-		{done, Self} ->
-		    collect_parse_model_processes(Self, Cores - 1)
+		{done, Self, R} ->
+		    collect_parse_model_processes(Self, Cores - 1, Acc ++ R)
 	    end
     end.
 

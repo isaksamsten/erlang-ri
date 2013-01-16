@@ -21,13 +21,13 @@ get_semantic_vector(Item, Vectors) ->
 %% Write model (Result) to File
 %%
 write_model_to_file(File, Length, Result) ->
-    Io = case file:open(File, [raw, write]) of
+    Io = case file:open(File, [write]) of
 	     {ok, Io0} -> Io0;
 	     error -> throw({error, file_not_found})
 	 end,
     file:write(Io, io_lib:format("header,length,~p~n", [Length])),
     dict:fold(fun (Word, #semantic_vector{values=Vector}, _) ->
-		      file:write(Io, io_lib:format("\"~p\",", [Word])),
+		      file:write(Io, io_lib:format("~p,", [Word])),
 		      case dict:size(Vector) of
 			  0 ->
 			      file:write(Io, io_lib:format("empty~n", []));

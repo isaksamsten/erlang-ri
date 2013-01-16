@@ -28,8 +28,10 @@ stop() ->
     ok.	 
 
 cmd_spec() ->
-    [{input_file,  $i,             "input",   string, 
+    [{input_file,     $i,          "input",   string, 
       "Input file consisting of one document per line"},
+     {load,           undefined,   "load",    undefined,
+      "Load -i (--input) as a model"},
      {output_model,   undefined,   "model",   undefined,
       "Write semantic vectors to file"},
      {output_index,   undefined,   "index",   undefined,
@@ -78,52 +80,62 @@ run_experiment(Io, Cores, Window, Length, Prob, Variance) ->
 							  prob=Prob, 
 							  variance=Variance}).
 
-
+illegal() ->
+    getopt:usage(cmd_spec(), "ri"),
+    halt().
 %%
 %% Entry for the command line interface
 %%
 main(Args) ->
-    Illegal = fun() ->
-		      getopt:usage(cmd_spec(), "ri"),
-		      halt()
-	      end,
-    
     Options = case getopt:parse(cmd_spec(), Args) of
 		  {ok, Parsed} -> 
 		      Parsed;
 		  {error, _} ->
-		      Illegal()		      
+		      illegal()		      
 	      end,
 
     case getsopt(help, Options) of 
-	true -> Illegal(); 
+	true -> illegal(); 
 	false -> ok 
     end,
     case getsopt(version, Options) of 
 	true -> io:format("~s", [show_information()]), halt();
 	_ -> ok end,
-    InputFile = getopt(input_file, Illegal, Options),
-    Window = case getopt(reduce, Illegal, Options) of
+
+    case getsopt(load, Options) of
+	true ->
+	    load_model(Options);
+	false ->
+	    generate_model(Options)
+    end.
+	    
+load_model(Options) ->
+    InputFile = getopt(input_file, fun illegal/0, Options),
+    ri_parser:run(InputFile, getopt(cores, fun illegal/0, Options)).
+
+generate_model(Options) ->
+    InputFile = getopt(input_file, fun illegal/0, Options),
+    Window = case getopt(reduce, fun illegal/0, Options) of
 		 true -> doc;
-		 false -> case  getopt(item, Illegal, Options) of
+		 false -> case  getopt(item, fun illegal/0, Options) of
 			      true -> item;
-			      false -> getopt(window, Illegal, Options)
+			      false -> getopt(window, fun illegal/0, Options)
 			  end
 	     end,
-    Cores = getopt(cores, Illegal, Options),
-    Length = getopt(length, Illegal, Options),
-    Prob = getopt(prob, Illegal, Options),
-    Variance = getopt(variance, Illegal, Options),
+    Cores = getopt(cores, fun illegal/0, Options),
+    Length = getopt(length, fun illegal/0, Options),
+    Prob = getopt(prob, fun illegal/0, Options),
+    Variance = getopt(variance, fun illegal/0, Options),
 
     Outputs = try 
 		  merge_opts(getopts([output_model, output_index, output_reduced], Options), Options)
 	      catch
 		  _:_ ->
-		      Illegal()
+		      illegal()
 	      end,
     if
 	Variance >= Prob ->
-	    Illegal();
+	    illegal();
 	true -> ok
     end,
 
@@ -137,8 +149,7 @@ main(Args) ->
 	      [dict:size(Result), timer:now_diff(now(), Then) / 1000000]),
 
 
-    write_files(Outputs, Length, Result),
-    halt().
+    write_files(Outputs, Length, Result).
 
 write_files([], _, _) ->
     ok;
