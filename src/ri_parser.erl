@@ -38,7 +38,7 @@ wait_for_user_input(R) ->
 	execute(string:tokens(Commands, ", \n"), R)
     catch
 	_:X ->
-	    io:format("Error: ~p ~n", [X]),
+	    io:format("Error: ~p ~n", [X])
     end,	
     wait_for_user_input(R).
 
