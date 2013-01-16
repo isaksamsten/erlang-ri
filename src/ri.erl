@@ -103,7 +103,13 @@ main(Args) ->
 	true -> io:format("~s", [show_information()]), halt();
 	_ -> ok end,
     InputFile = getopt(input_file, Illegal, Options),
-    Window = getopt(window, Illegal, Options),
+    Window = case getopt(reduce, Illegal, Options) of
+		 true -> doc;
+		 false -> case  getopt(item, Illegal, Options) of
+			      true -> item;
+			      false -> getopt(window, Illegal, Options)
+			  end
+	     end,
     Cores = getopt(cores, Illegal, Options),
     Length = getopt(length, Illegal, Options),
     Prob = getopt(prob, Illegal, Options),
@@ -143,7 +149,12 @@ write_files([{output_model, File}|Rest], Length, Result) ->
 write_files([{output_index, File}|Rest], L, R) ->
     io:format(standard_error, "*** Writing index vectors to '~s' *** ~n", [File]),
     ri_util:write_index_to_file(File),
-    write_files(Rest, L, R).
+    write_files(Rest, L, R);
+write_files([{output_reduced, File}|Rest], Length, Result) ->
+    io:format(standard_error, "*** Writing reduced model to '~s' *** ~n", [File]),
+    ri_util:write_reduced_to_file(File, Length, Result),
+    write_files(Rest, Length, Result).
+
 
     
 

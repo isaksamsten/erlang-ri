@@ -1,6 +1,7 @@
 -module(ri_util).
 -include("ri.hrl").
 -export([write_model_to_file/3,
+	 write_reduced_to_file/3,
 	 write_index_to_file/1,
 	 get_semantic_vector/2]).
 
@@ -26,7 +27,7 @@ write_model_to_file(File, Length, Result) ->
 	 end,
     file:write(Io, io_lib:format("header,length,~p~n", [Length])),
     dict:fold(fun (Word, #semantic_vector{values=Vector}, _) ->
-		      file:write(Io, io_lib:format("\"~s\",", [Word])),
+		      file:write(Io, io_lib:format("\"~p\",", [Word])),
 		      case dict:size(Vector) of
 			  0 ->
 			      file:write(Io, io_lib:format("empty~n", []));
@@ -39,6 +40,31 @@ write_model_to_file(File, Length, Result) ->
 		      end
 	      end, [], Result),
     file:close(Io).
+
+write_reduced_to_file(File, Length, Result) ->
+    Io = case file:open(File, [raw, write]) of
+	     {ok, Io0} -> Io0;
+	     error -> throw({error, file_not_found})
+	 end,
+    file:write(Io, io_lib:format("~s~n", [string:join([io_lib:format("~p", [S]) || S <- lists:seq(1, Length)], ",")])),
+    dict:fold(fun (Doc, #semantic_vector{values=Vector}, _) ->
+		      Values = lists:map(fun(Index) ->
+						 case dict:find(Index, Vector) of
+						     {ok, Value} ->
+							 io_lib:format("~p", [Value]);
+						     error ->
+							 "0"
+						 end
+					 end, lists:seq(1, Length)),
+		      file:write(Io, io_lib:format("~s~n", [string:join(Values, ",")]))
+	      end, [], Result),
+    file:close(Io).
+		      
+				
+				
+					    
+					    
+		 
 
 %%
 %% Write the random index to File
