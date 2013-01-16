@@ -1,0 +1,14 @@
+{application, ri,
+ [
+  {description, ""},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib,
+		  getopt
+                 ]},
+  {mod, { ri, []}},
+  {env, []},
+  {escript_emu_args, "%%! -smp auto\n"}
+ ]}.

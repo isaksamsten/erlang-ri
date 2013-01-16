@@ -4,7 +4,7 @@
 -define(DATA, "2013-01-07").
 -define(MAJOR_VERSION, 0).
 -define(MINOR_VERSION, 1).
--define(REVISION, 'beta-2').
+-define(REVISION, 'beta-3').
 
 -define(AUTHOR, "Isak Karlsson <isak-kar@dsv.su.se>").
 
@@ -26,6 +26,36 @@ init() ->
 stop() ->
     ets:delete(index_vectors),
     ok.	 
+
+cmd_spec() ->
+    [{input_file,  $i,             "input",   string, 
+      "Input file consisting of one document per line"},
+     {output_model,   undefined,   "model",   undefined,
+      "Write semantic vectors to file"},
+     {output_index,   undefined,   "index",   undefined,
+      "Write index vectors to file"},
+     {output_reduced, undefined,   "dataset", undefined,
+      "Write a reduced data set to file"},
+     {help,           undefined,   "help",    undefined,
+      "Show this text"},
+     {version,        undefined,   "version", undefined,
+      "Show the application version"},
+     {window,         $w,          "window",  {integer, 2},
+      "Set the size of the sliding window"},
+     {reduce,         $r,          "reduce",  {boolean, false},
+      "Use the items as the index vector for the document"},
+     {item,           undefined,   "item",    {boolean, false},
+      "Use the document as index vector for each item"},
+     {cores,          $c,          "cores",   {integer, erlang:system_info(schedulers)},
+      "Number of parallell executions"},
+     {length,         $l,          "length",  {integer, 4000},
+      "Length of the index vector"},
+     {prob,           $p,          undefined, {integer, 7},
+      "Number of non-negative bits in index vector"},
+     {variance,       $v,          undefined, {integer, 0},
+      "Variance in the number of non-negative bits."},
+     {output,         $o,          "output",  string,
+      "Output file"}].
 
 %%
 %% Running a file of documents
@@ -52,38 +82,42 @@ run_experiment(Io, Cores, Window, Length, Prob, Variance) ->
 %%
 %% Entry for the command line interface
 %%
-start() ->
-    Illegal = fun(Arg) -> stdillegal(Arg) end,
-    Return = fun(V) -> V end,
-    Default = fun(V) -> fun() -> V end end,
-    Warn    = fun(V) -> fun() -> stdwarn(V) end end,
+main(Args) ->
+    Illegal = fun() ->
+		      getopt:usage(cmd_spec(), "ri"),
+		      halt()
+	      end,
+    
+    Options = case getopt:parse(cmd_spec(), Args) of
+		  {ok, Parsed} -> 
+		      Parsed;
+		  {error, _} ->
+		      Illegal()		      
+	      end,
 
-    case init:get_argument(h) of
-	{ok, _} ->
-	    show_help(),
-	    halt();
-	_ -> true
+    case getsopt(help, Options) of 
+	true -> Illegal(); 
+	false -> ok 
     end,
+    case getsopt(version, Options) of 
+	true -> io:format("~s", [show_information()]), halt();
+	_ -> ok end,
+    InputFile = getopt(input_file, Illegal, Options),
+    Window = getopt(window, Illegal, Options),
+    Cores = getopt(cores, Illegal, Options),
+    Length = getopt(length, Illegal, Options),
+    Prob = getopt(prob, Illegal, Options),
+    Variance = getopt(variance, Illegal, Options),
 
-    InputFile = get_argument(i, Return, Illegal, Warn("Input file required")),
-    Window   = get_argument(w, fun(Value) ->
-				       try list_to_integer(Value)
-				       catch
-					   _:_ ->
-					       list_to_atom(Value)
-				       end					   
-			       end, Illegal, Default(2)),
-    Cores    = get_argument(c, fun list_to_integer/1, Illegal, Default(erlang:system_info(schedulers))),
-    Length   = get_argument(l, fun list_to_integer/1, Illegal, Default(4000)),
-    Prob     = get_argument(p, fun list_to_integer/1, Illegal, Default(7)),
-    Variance = get_argument(v, fun list_to_integer/1, Illegal, Default(0)),
-    SemanticOutput = get_argument(om, fun(V) -> {ok, V} end, Illegal, Default(error)),
-    IndexOutput = get_argument(om, fun(V) -> {ok, V} end, Illegal, Default(error)),
-
-
+    Outputs = try 
+		  merge_opts(getopts([output_model, output_index, output_reduced], Options), Options)
+	      catch
+		  _:_ ->
+		      Illegal()
+	      end,
     if
 	Variance >= Prob ->
-	    stdillegal("v"), halt();
+	    Illegal();
 	true -> ok
     end,
 
@@ -95,83 +129,59 @@ start() ->
     Result = run(InputFile, Cores, Window, Length, Prob, Variance),
     io:format(standard_error, "*** Calculated ~p semantic vectors in ~p second(s)*** ~n", 
 	      [dict:size(Result), timer:now_diff(now(), Then) / 1000000]),
-    case SemanticOutput of
-	{ok, OutputFile} ->
-	    io:format(standard_error, "*** Writing model to '~s' *** ~n", [OutputFile]),
-	    ri_util:write_model_to_file(OutputFile, Length, Result);
-       error ->
-	    ok
-    end,
-    case IndexOutput of
-	{ok, IOut} ->
-	    io:format(standard_error, "*** Writing index vectors to '~s' *** ~n", [IOut]),
-	    ri_util:write_index_to_file(IOut);
-	error ->
-	    ok
-    end,
+
+
+    write_files(Outputs, Length, Result),
     halt().
 
-get_argument(Arg, Fun0, Fun1, Fun2) ->	
-    case init:get_argument(Arg) of
-	{ok, Ws} ->
-	    case Ws of
-		[[W]] ->
-		    Fun0(W);
-		[_] ->
-		    Fun1(Arg)
-	    end;
-	_ -> 
-	    Fun2()
+write_files([], _, _) ->
+    ok;
+write_files([{output_model, File}|Rest], Length, Result) ->
+    io:format(standard_error, "*** Writing model to '~s' *** ~n", [File]),
+    ri_util:write_model_to_file(File, Length, Result),
+    write_files(Rest, Length, Result);
+write_files([{output_index, File}|Rest], L, R) ->
+    io:format(standard_error, "*** Writing index vectors to '~s' *** ~n", [File]),
+    ri_util:write_index_to_file(File),
+    write_files(Rest, L, R).
+
+    
+
+getopt(Arg, Fun1, {Options, _}) ->	
+    case lists:keyfind(Arg, 1, Options) of
+	{Arg, Ws} ->
+	    Ws;
+	false -> 
+	    Fun1()
     end.
 
-stdwarn(Out) ->
-    io:format(standard_error, " **** ~s **** ~n", [Out]),
-    io:format(standard_error, "See tr -h for options ~n", []).
+getsopt(Arg, {Options, _ }) ->
+    lists:any(fun (K) ->
+		      K == Arg
+	      end, Options).
 
-stdillegal(Arg) ->
-    stdwarn(io_lib:format("Error: Invalid argument(s) to -~s", [Arg])).
+getopt(Arg, {Options,_}) ->
+    case lists:keyfind(Arg, 1, Options) of
+	{Arg, Ws} ->
+	    Ws;
+	false ->
+	    false
+    end.
 
-show_help() ->
-    io:format(standard_error,"~s
+getopts(Match, {Options, _}) ->
+    Match0 = sets:from_list(Match),
+    lists:filter(fun (Option) ->
+			 sets:is_element(Option, Match0)
+		 end, Options).
 
-Example: ri -i ../data/brown.txt -w 2 -c 4 -l 4000 -p 7 -v 2
-         ri -i ../data/brown.txt -w 2
-         ri -i ../data/brown.txt -w 2 -o > model.txt
-
--i   [input-doc]
-     Input file. One document per line, words (tokens) are comma separated.
-
--im  [semantic-vectors-file, index-vectors-file]
-     Read already calculated semantic vectors and index vectors from files.
-
--om  [file]
-     Write semantic vectors to file (default: false)
-
--oi  [file]
-     Write index vectors to file (default: false)
-
--is  Read a model for inspection (default: false)
-
--w   [number | dv | iv]
-     'number': The number of items in each side of the sliding window
-     'doc':    Document as index vector for each item in the document
-     'item':   Each item in a document as index vector for the document
-     (default: 2)
-
--c   [cores]
-     Number of parallell executions (default: ~p)
-
--l   [number]
-     Length of the index vector (default: 4000)
-
--p   [number]
-     Number of non negative bits in index vector (default: 7)
-
--v   [number]
-     Variance in the number of non negative bits. For example, 
-     setting -v to 2 gives 7 +- 2 non negative bits in index vector. Must
-     be < -p (default: 0).
-", [show_information(), erlang:system_info(schedulers)]).
+merge_opts(Matches, {Options, _}) ->
+    lists:zip(Matches, lists:reverse(lists:foldl(fun (O, Acc) ->
+							 case O of
+							     {output, File} ->
+								 [File|Acc];
+							     _ -> Acc
+							 end
+						 end, [], Options))).
 
 show_information() ->
     io_lib:format("Random index, Version (of ~s) ~p.~p.~s
