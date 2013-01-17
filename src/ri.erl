@@ -35,6 +35,10 @@ stop() ->
 cmd_spec() ->
     [{input_file,     $i,          "input",   string, 
       "Input file consisting of one document per line"},
+     {class_index,    undefined,   "class",   {integer, undefined},
+      "Item index to use as class"},
+     {ignore_index,   undefined,   "ignore",  {integer, undefined},
+      "Ignore items with index"},
      {load,           undefined,   "load",    undefined,
       "Load -i (--input) as a model"},
      {output_model,   undefined,   "model",   undefined,
@@ -67,20 +71,21 @@ cmd_spec() ->
 %%
 %% Running a file of documents
 %%
-run(File, Cores, Window, Length, Prob, Variance) ->
+run(File, Cores, Window, Length, Prob, Variance, Class) ->
     Pid = csv:reader(File),
-    run_experiment(Pid, Cores,  Window, Length, Prob, Variance).
+    run_experiment(Pid, Cores,  Window, Length, Prob, Variance, Class).
     
 
 %%
 %% Run a list of lists
 %%
-run_experiment(Io, Cores, Window, Length, Prob, Variance) ->
+run_experiment(Io, Cores, Window, Length, Prob, Variance, Class) ->
     catch stop(),
     init(),
     ri_update:spawn_vector_update_processes(#ri_conf{file=Io,
 						     window=Window,
-						     cores = Cores},
+						     cores = Cores,
+						     class=Class},
 					    #index_vector{length=Length, 
 							  prob=Prob, 
 							  variance=Variance}).
@@ -125,7 +130,7 @@ load_model(Options) ->
 generate_model(Options) ->
     InputFile = get_opt(input_file, fun illegal/0, Options),
     Window = case has_opt(reduce, Options) of
-		 true -> doc;
+		 true -> reduce;
 		 false -> case  has_opt(item, Options) of
 			      true -> item;
 			      false -> get_opt(window, fun illegal/0, Options)
@@ -135,7 +140,9 @@ generate_model(Options) ->
     Length = get_opt(length, fun illegal/0, Options),
     Prob = get_opt(prob, fun illegal/0, Options),
     Variance = get_opt(variance, fun illegal/0, Options),
-
+    Class = get_opt(class_index, fun illegal/0, Options),
+    Ignore = get_opt(ignore_index, fun illegal/0, Options),
+    
     Outputs = try 
 		  merge_opts(get_opts([output_model, output_index, output_reduced], Options), 
 			     output, Options)
@@ -156,14 +163,18 @@ generate_model(Options) ->
 	      [Window, Length, Prob, Variance]),
 
     Then = now(),    
-    Result = run(InputFile, Cores, Window, Length, Prob, Variance),
+    Result = run(InputFile, Cores, Window, Length, Prob, Variance, Class),
     io:format(standard_error, "*** Calculated ~p semantic vectors in ~p second(s)*** ~n", 
 	      [dict:size(Result), timer:now_diff(now(), Then) / 1000000]),
 
     Then0 = now(),
-    write_models(Outputs, Length, Result),
-    io:format(standard_error, "*** Wrote ~p models in ~p second(s)*** ~n", 
-	      [length(Outputs), timer:now_diff(now(), Then0) / 1000000]).
+    case length(Outputs) of
+	X when X > 0 -> 
+	    write_models(Outputs, Length, Result),
+	    io:format(standard_error, "*** Wrote ~p models in ~p second(s)*** ~n", 
+		      [X, timer:now_diff(now(), Then0) / 1000000]);
+	_ -> ok
+    end.
     
 
 

@@ -11,11 +11,20 @@
 %% Record for storing information regarding the length and contents
 %% of the semantic vector
 %%
--record(semantic_vector, {length, values}).
+%% class: undefined() | string()
+%% length: int() showing the length of the vector
+%% values: dict() -> {term(), integer()} of indicies and values
+%%
+-record(semantic_vector, {class, length, values}).
 
 
 %%
-%% Record for 
+%% Record for storing configuration options
+%% 
+%% file: Pid, to csv:reader/2
+%% window: window size, doc or item
+%% cores: number of processing cores
+%% ignore: ignore items with id 
+%% class: treat index as class 
 %%
-%%
--record(ri_conf, {file, window, cores}).
+-record(ri_conf, {file, window, cores, ignore, class}).

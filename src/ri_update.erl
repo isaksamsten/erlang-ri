@@ -14,16 +14,22 @@ vector_update_process(Parent, RiConf, IndexVector) ->
     random:seed(erlang:now()),
     vector_update_process(Parent, RiConf, IndexVector, dict:new()).
 
-vector_update_process(Parent, #ri_conf{file=Io, window=Window} = RiConf, IndexVector, Result) ->
+vector_update_process(Parent, #ri_conf{file=Io, window=Window, class=ClassIdx} = RiConf, IndexVector, Result) ->
     case csv:get_next_line(Io) of
 	{ok, Item, Id} ->
 	    Result0 = case Window of
 			  X when is_number(X) ->
 			      update_item(Result, Item, Window, IndexVector);
-			  doc ->
-			      update_all(Result, Item, IndexVector, Id);
+			  reduce ->
+			      case ClassIdx of
+				  undefined ->
+				      update_all(Result, Item, IndexVector, Id);
+				  _ ->
+				      Class = lists:nth(ClassIdx, Item),
+				      update_all_class(Result, Item, IndexVector, Id, Class)
+			      end;
 			  item ->
-			      update_all_pivots(Result, Id, IndexVector, Item)
+			      update_all_with(Result, Id, IndexVector, Item)
 		      end,			  
 	    vector_update_process(Parent, RiConf, IndexVector, Result0);
 	eof ->
@@ -65,18 +71,16 @@ spawn_vector_update_processes(#ri_conf{cores=Cores} = RiConf, IndexVector) ->
 %% Wait for Cores messages to be sent to Self in the form of: {done,
 %% Pid, Self}
 %%
+wait_for_vector_updates(_, 0, Result) ->
+    Result;
 wait_for_vector_updates(Self, Cores, Result) ->
-    if Cores == 0 ->
-	    Result;
-       true ->
-	    receive
-		{done, _Pid, Self, Dict} ->
-		    Result0 = merge_semantic_vectors(Result, Dict),
-		    wait_for_vector_updates(Self, Cores - 1, Result0);
-		{'EXIT', _, normal} ->
-		    wait_for_vector_updates(Self, Cores, Result);			
-		X -> throw({error, some_error, X})
-	    end
+    receive
+	{done, _Pid, Self, Dict} ->
+	    Result0 = merge_semantic_vectors(Result, Dict),
+	    wait_for_vector_updates(Self, Cores - 1, Result0);
+	{'EXIT', _, normal} ->
+	    wait_for_vector_updates(Self, Cores, Result);			
+	X -> throw({error, some_error, X})
     end.
    
 %%
@@ -98,26 +102,28 @@ update_item(Result, [Pivot|Rest], Window, IndexVector, Queue) ->
 							false ->
 							    queue:in(Pivot, Queue)
 						    end).
+
+update_all_class(Result, Items, IndexVector, Pivot, Class) ->
+    lists:foldl(fun (Item, Result0) ->
+			update_pivot(Result0, Pivot, Item, IndexVector, Class)
+		end, Result, Items).
+
 %%
 %% Update Pivot with all items in Items
 %%
 update_all(Result, Items, IndexVector, Pivot) ->
-    case Items of
-	[] ->
-	    Result;
-	[Item|Rest] ->
-	    Result0 = update_pivot(Result, Pivot, Item, IndexVector),
-	    update_all(Result0, Rest, IndexVector, Pivot)
-    end.
+    lists:foldl(fun (Item, Result0) ->
+			update_pivot(Result0, Pivot, Item, IndexVector)
+		end, Result, Items).
 
-update_all_pivots(Result, Item, IndexVector, Pivots) ->
-    case Pivots of
-	[] ->
-	    Result;
-	[Pivot|Rest] ->
-	    update_all_pivots(update_pivot(Result, Pivot, Item, IndexVector),
-			      Item, IndexVector, Rest)
-    end.
+%%
+%% Update all items in Pivots with the index vector of
+%% Item
+%%
+update_all_with(Result, Item, IndexVector, Pivots) ->
+    lists:foldl(fun (Pivot, Result0) ->
+			update_pivot(Result0, Pivot, Item, IndexVector)
+		end, Result, Pivots).
 
 %% 
 %% Update Pivot with Current to Limit number of items
@@ -138,11 +144,14 @@ update_limit(Result, {Limit, Current}, Items, IndexVector, Pivot) ->
 %%
 %% Update Pivot (semantic vector) w.r.t. Item (index vector)
 %%
-update_pivot(Result, Pivot, Item, #index_vector{length=Length} = IndexVectorInfo) ->
+update_pivot(Result, Pivot, Item, #index_vector{length=Length} = IndexVectorInfo, Class) ->
     IndexVector = get_index_vector(Item, IndexVectorInfo),
     dict:update(Pivot, fun(PivotVector) ->
 			       add_vectors(PivotVector, IndexVector)
-		       end, new_semantic_vector(Length), Result).
+		       end, new_semantic_vector(Class, Length), Result).
+
+update_pivot(Result, Pivot, Item, IndexVector) ->
+    update_pivot(Result, Pivot, Item, IndexVector, undefined).
 
 %%
 %% Init a random vector of Length lenght and the Prob prob to
@@ -171,9 +180,9 @@ merge_semantic_vectors(VectorA, VectorB) ->
 %%
 %% Merge the semantic vectors for two Items
 %%
-merge_semantic_vector(#semantic_vector{length=Length, values=VectorA}, 
-		      #semantic_vector{length=Length, values=VectorB}) ->
-    #semantic_vector{length=Length,
+merge_semantic_vector(#semantic_vector{class=Class, length=Length, values=VectorA}, 
+		      #semantic_vector{class=Class, length=Length, values=VectorB}) ->
+    #semantic_vector{class=Class, length=Length,
 		     values=dict:merge(fun (_Key, ValueA, ValueB) ->
 					       ValueA + ValueB
 				       end, VectorA, VectorB)}.
@@ -181,8 +190,8 @@ merge_semantic_vector(#semantic_vector{length=Length, values=VectorA},
 %%
 %% Create a new semantic vector
 %%
-new_semantic_vector(Length) ->   
-    #semantic_vector{length=Length, values=dict:new()}.
+new_semantic_vector(Class, Length) ->
+    #semantic_vector{class=Class, length=Length, values=dict:new()}.
     
 %%
 %% Generate an index vector
@@ -214,10 +223,9 @@ new_index_vector(Length, Values, Variance) ->
 %%
 %% VectorA -> {Length, dict() -> {Index, Value}}
 %%
-add_vectors(#semantic_vector{length=Length, values=VectorA}, VectorB) ->
-    #semantic_vector{length=Length, 
-		     values=lists:foldl(fun ({Index, Value}, Acc) ->
-						dict:update(Index, fun (Old) ->
-									   Old + Value
-								   end, Value, Acc)
-					end, VectorA, VectorB)}.
+add_vectors(#semantic_vector{values=VectorA} = Vector, VectorB) ->
+    Vector#semantic_vector{values=lists:foldl(fun ({Index, Value}, Acc) ->
+						      dict:update(Index, fun (Old) ->
+										 Old + Value
+									 end, Value, Acc)
+					      end, VectorA, VectorB)}.

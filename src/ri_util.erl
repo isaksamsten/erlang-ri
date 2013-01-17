@@ -46,9 +46,11 @@ write_reduced_to_file(File, Length, Result) ->
 	     {ok, Io0} -> Io0;
 	     error -> throw({error, file_not_found})
 	 end,
-    file:write(Io, io_lib:format("~s~n", [string:join([io_lib:format("~p", [S]) || S <- lists:seq(1, Length)], ",")])),
-    dict:fold(fun (Doc, #semantic_vector{values=Vector}, _) ->
-		      file:write(Io, io_lib:format("~p", [Doc])),
+    file:write(Io, "id,class,"),
+    file:write(Io, io_lib:format("~s~n", [string:join(
+					    [io_lib:format("~p", [S]) || S <- lists:seq(1, Length)], ",")])),
+    dict:fold(fun (Doc, #semantic_vector{class=Class, values=Vector}, _) ->
+		      file:write(Io, io_lib:format("~p,", [Doc])),
 		      Values = lists:map(fun(Index) ->
 						 case dict:find(Index, Vector) of
 						     {ok, Value} ->
@@ -57,6 +59,7 @@ write_reduced_to_file(File, Length, Result) ->
 							 "0"
 						 end
 					 end, lists:seq(1, Length)),
+		      file:write(Io, io_lib:format("~s,", [Class])),
 		      file:write(Io, io_lib:format("~s~n", [string:join(Values, ",")]))
 	      end, [], Result),
     file:close(Io).
