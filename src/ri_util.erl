@@ -47,6 +47,9 @@ write_reduced_to_file(File, Length, Result) ->
 	     error -> throw({error, file_not_found})
 	 end,
     file:write(Io, "id,class,"),
+    file:write(Io, io_lib:format("~s~n", [string:join(lists:duplicate(Length, "numeric"), ",")])),
+
+    file:write(Io, "id,class,"),
     file:write(Io, io_lib:format("~s~n", [string:join(
 					    [io_lib:format("~p", [S]) || S <- lists:seq(1, Length)], ",")])),
     dict:fold(fun (Doc, #semantic_vector{class=Class, values=Vector}, _) ->

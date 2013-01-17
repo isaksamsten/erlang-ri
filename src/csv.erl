@@ -18,7 +18,7 @@ reader(File) ->
 spawn_parser(File) ->
     case file:open(File, [read, read_ahead]) of
 	{ok, Io} ->
-	    parse_incremental(Io, 0);
+	    parse_incremental(Io, 1);
 	_ ->
 	    throw({error, file_not_found})
     end.
