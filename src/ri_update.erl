@@ -7,6 +7,13 @@
 -include("ri.hrl").
 
 %%
+%% Remove item on N
+%%
+remove_nth(List, N) ->
+  {L1, [_|L2]} = lists:split(N-1, List),
+  L1 ++ L2.
+
+%%
 %% Process that updates an item (concurrently), by reading a new line
 %% from Io.
 %%
@@ -26,7 +33,7 @@ vector_update_process(Parent, #ri_conf{file=Io, window=Window, class=ClassIdx} =
 				      update_all(Result, Item, IndexVector, Id);
 				  _ ->
 				      Class = lists:nth(ClassIdx, Item),
-				      update_all_class(Result, Item, IndexVector, Id, Class)
+				      update_all_class(Result, remove_nth(Item, ClassIdx), IndexVector, Id, Class)
 			      end;
 			  item ->
 			      update_all_with(Result, Id, IndexVector, Item)
