@@ -3,8 +3,6 @@
 -export([cosine/2,
 	 euclidian/2,
 	 minkowski/3,
-	 dot_product/2,
-	 magnitude/1,
 	 cmp/3,
 	 cmp/4,
 	 to/3,
@@ -49,32 +47,16 @@ minkowski(#semantic_vector{length=Length, values=A},
 			 end, 0, dict:fetch_keys(A) ++ dict:fetch_keys(B)), 1/P).
 				 
 cosine(A, B) ->
-    case dot_product(A, B) of 
+    case ri_vector:dot_product(A, B) of 
 	0.0 -> 0;
-	X -> case magnitude(A) of
+	X -> case ri_vector:magnitude(A) of
 		 0.0 -> 0.0;
-		 Y -> case magnitude(B) of
+		 Y -> case ri_vector:magnitude(B) of
 			  0.0 -> 0.0;
 			  Z -> X / (Y * Z)
 		      end
 	     end
     end.
-
-dot_product(#semantic_vector{values=A}, 
-	    #semantic_vector{values=B}) ->
-    dict:fold(fun (Index, ValueA, Dot) ->
-		      case dict:find(Index, B) of
-			  {ok, ValueB} ->
-			      Dot + (ValueA * ValueB);
-			  error ->
-			      Dot
-		      end
-	      end, 0, A).
-
-magnitude(#semantic_vector{values=Vector}) ->		      
-    math:sqrt(dict:fold(fun (_, Value, Acc) ->
-				Acc + (Value * Value)
-			end, 0, Vector)).
  
 %%
 %% Compare two semantic vectors

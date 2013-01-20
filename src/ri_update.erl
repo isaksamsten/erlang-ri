@@ -76,7 +76,7 @@ wait_for_vector_updates(_, 0, Result) ->
 wait_for_vector_updates(Self, Cores, Result) ->
     receive
 	{done, _Pid, Self, Dict} ->
-	    Result0 = merge_semantic_vectors(Result, Dict),
+	    Result0 = ri_vector:merge_semantic_vectors(Result, Dict),
 	    wait_for_vector_updates(Self, Cores - 1, Result0);
 	{'EXIT', _, normal} ->
 	    wait_for_vector_updates(Self, Cores, Result);			
@@ -145,88 +145,10 @@ update_limit(Result, {Limit, Current}, Items, IndexVector, Pivot) ->
 %% Update Pivot (semantic vector) w.r.t. Item (index vector)
 %%
 update_pivot(Result, Pivot, Item, #index_vector{length=Length} = IndexVectorInfo, Class) ->
-%    io:format("Updating: '~p' with '~p' ~n", [Pivot, Item]),
-    IndexVector = get_index_vector(Item, IndexVectorInfo),
+    IndexVector = ri_vector:get_index_vector(Item, IndexVectorInfo),
     dict:update(Pivot, fun(PivotVector) ->
-			       add_vectors(PivotVector, IndexVector)
-		       end, new_semantic_vector(Class, Length), Result).
+			       ri_vector:add(PivotVector, IndexVector)
+		       end, ri_vector:new_semantic_vector(Class, Length), Result).
 
 update_pivot(Result, Pivot, Item, IndexVector) ->
     update_pivot(Result, Pivot, Item, IndexVector, undefined).
-
-%%
-%% Init a random vector of Length lenght and the Prob prob to
-%% spawn -1 or 1
-%%
-get_index_vector(Item, #index_vector{length=Length,
-				     prob=Prob,
-				     variance=Variance}) ->	    
-    case ets:lookup(index_vectors, Item) of
-	[{_, Vector}] ->
-	    Vector;
-	[] ->
-	    Vector = new_index_vector(Length, Prob, Variance),
-	    ets:insert(index_vectors, {Item, Vector}),
-	    Vector
-    end.
-
-%%
-%% Merge two collections of semantic vectors
-%%
-merge_semantic_vectors(VectorA, VectorB) ->
-    dict:merge(fun (_, A, B) ->
-		       merge_semantic_vector(A, B)
-	       end, VectorA, VectorB).
-
-%%
-%% Merge the semantic vectors for two Items
-%%
-merge_semantic_vector(#semantic_vector{class=Class, length=Length, values=VectorA}, 
-		      #semantic_vector{class=Class, length=Length, values=VectorB}) ->
-    #semantic_vector{class=Class, length=Length,
-		     values=dict:merge(fun (_Key, ValueA, ValueB) ->
-					       ValueA + ValueB
-				       end, VectorA, VectorB)}.
-
-%%
-%% Create a new semantic vector
-%%
-new_semantic_vector(Class, Length) ->
-    #semantic_vector{class=Class, length=Length, values=dict:new()}.
-    
-%%
-%% Generate an index vector
-%%
-generate_index_vector(_, 0, Sets) ->
-    sets:to_list(Sets);
-generate_index_vector(Length, Set, Sets) ->
-    Index = random:uniform(Length),
-    case sets:is_element(Index, Sets) of
-	true ->
-	    generate_index_vector(Length, Set, Sets);
-	false ->
-	    case random:uniform() of
-		X when X > 0.5 ->
-		    generate_index_vector(Length, Set - 1, sets:add_element({Index, 1}, Sets));
-		_ ->
-		    generate_index_vector(Length, Set - 1, sets:add_element({Index, -1}, Sets))
-	    end
-    end.
-
-new_index_vector(Length, Values, Variance) ->
-    Set = round(Values + (random:uniform() * Variance * case random:uniform() of
-							    X when X > 0.5 ->
-								1;
-							    _ -> -1
-							end)),
-    generate_index_vector(Length, Set, sets:new()).
-
-%%
-%% VectorA -> {Length, dict() -> {Index, Value}}
-%%
-add_vectors(#semantic_vector{values=VectorA} = Vector, VectorB) ->
-    Vector#semantic_vector{values=lists:foldl(fun ({Index, Value}, Acc) ->
-						      dict:update(Index, fun (Old) ->
-										 Old + Value
-									 end, Value, Acc)
-					      end, VectorA, VectorB)}.

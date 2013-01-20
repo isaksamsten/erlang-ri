@@ -141,7 +141,7 @@ generate_model(Options) ->
     Prob = get_opt(prob, fun illegal/0, Options),
     Variance = get_opt(variance, fun illegal/0, Options),
     Class = get_opt(class_index, fun illegal/0, Options),
-    Ignore = get_opt(ignore_index, fun illegal/0, Options),
+    _Ignore = get_opt(ignore_index, fun illegal/0, Options),
     
     Outputs = try 
 		  merge_opts(get_opts([output_model, output_index, output_reduced], Options), 
