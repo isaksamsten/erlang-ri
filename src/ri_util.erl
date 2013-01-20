@@ -3,7 +3,15 @@
 -export([write_model_to_file/3,
 	 write_reduced_to_file/3,
 	 write_index_to_file/1,
-	 get_semantic_vector/2]).
+	 get_semantic_vector/2,
+	 take_nth/2]).
+
+%%
+%% Remove item on N
+%%
+take_nth(List, N) ->
+    {L1, [Item|L2]} = lists:split(N-1, List),
+    {Item, L1 ++ L2}.
 
 
 %%

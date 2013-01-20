@@ -7,13 +7,6 @@
 -include("ri.hrl").
 
 %%
-%% Remove item on N
-%%
-remove_nth(List, N) ->
-  {L1, [_|L2]} = lists:split(N-1, List),
-  L1 ++ L2.
-
-%%
 %% Process that updates an item (concurrently), by reading a new line
 %% from Io.
 %%
@@ -23,20 +16,20 @@ vector_update_process(Parent, RiConf, IndexVector) ->
 
 vector_update_process(Parent, #ri_conf{file=Io, window=Window, class=ClassIdx} = RiConf, IndexVector, Result) ->
     case csv:get_next_line(Io) of
-	{ok, Item, Id} ->
+	{ok, Item, Line} ->
 	    Result0 = case Window of
 			  X when is_number(X) ->
 			      update_item(Result, Item, Window, IndexVector);
 			  reduce ->
 			      case ClassIdx of
-				  undefined ->
-				      update_all(Result, Item, IndexVector, Id);
+				  undefined -> %% unsupervised?
+				      update_all(Result, Item, IndexVector, Line);
 				  _ ->
-				      Class = lists:nth(ClassIdx, Item),
-				      update_all_class(Result, remove_nth(Item, ClassIdx), IndexVector, Id, Class)
+				      {Class, Rest} = ri_util:take_nth(Item, ClassIdx),
+				      update_all_class(Result, Rest, IndexVector, Line, Class)
 			      end;
 			  item ->
-			      update_all_with(Result, Id, IndexVector, Item)
+			      update_all_with(Result, Line, IndexVector, Item)
 		      end,			  
 	    vector_update_process(Parent, RiConf, IndexVector, Result0);
 	eof ->
@@ -152,6 +145,7 @@ update_limit(Result, {Limit, Current}, Items, IndexVector, Pivot) ->
 %% Update Pivot (semantic vector) w.r.t. Item (index vector)
 %%
 update_pivot(Result, Pivot, Item, #index_vector{length=Length} = IndexVectorInfo, Class) ->
+%    io:format("Updating: '~p' with '~p' ~n", [Pivot, Item]),
     IndexVector = get_index_vector(Item, IndexVectorInfo),
     dict:update(Pivot, fun(PivotVector) ->
 			       add_vectors(PivotVector, IndexVector)
