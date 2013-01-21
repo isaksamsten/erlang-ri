@@ -4,7 +4,24 @@
 	 write_reduced_to_file/3,
 	 write_index_to_file/1,
 	 get_semantic_vector/2,
-	 take_nth/2]).
+	 take_nth/2,
+	 unique_keep_order/1]).
+
+unique_keep_order(List) ->
+    unique_keep_order(List, sets:new(), []).
+
+unique_keep_order(List, Seen, Acc) ->
+    case List of
+	[] ->
+	    lists:reverse(Acc);
+	[H|Rest] ->
+	    case sets:is_element(H, Seen) of
+		true ->
+		    unique_keep_order(Rest, Seen, Acc);
+		false ->
+		    unique_keep_order(Rest, sets:add_element(H, Seen), [H|Acc])
+	    end
+    end.
 
 %%
 %% Remove item on N

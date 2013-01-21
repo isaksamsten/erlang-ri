@@ -39,6 +39,8 @@ cmd_spec() ->
       "Item index to use as class"},
      {ignore_index,   undefined,   "ignore",  {integer, undefined},
       "Ignore items with index"},
+     {unique,         undefined,   "unique",  {boolean, false},
+      "Unique all items in a document"},
      {load,           undefined,   "load",    undefined,
       "Load -i (--input) as a model"},
      {output_model,   undefined,   "model",   undefined,
@@ -71,21 +73,22 @@ cmd_spec() ->
 %%
 %% Running a file of documents
 %%
-run(File, Cores, Window, Length, Prob, Variance, Class) ->
+run(File, Cores, Window, Length, Prob, Variance, Class, Unique) ->
     Pid = csv:reader(File),
-    run_experiment(Pid, Cores,  Window, Length, Prob, Variance, Class).
+    run_experiment(Pid, Cores,  Window, Length, Prob, Variance, Class, Unique).
     
 
 %%
 %% Run a list of lists
 %%
-run_experiment(Io, Cores, Window, Length, Prob, Variance, Class) ->
+run_experiment(Io, Cores, Window, Length, Prob, Variance, Class, Unique) ->
     catch stop(),
     init(),
     ri_update:spawn_vector_update_processes(#ri_conf{file=Io,
 						     window=Window,
 						     cores = Cores,
-						     class=Class},
+						     class=Class,
+						     unique=Unique},
 					    #index_vector{length=Length, 
 							  prob=Prob, 
 							  variance=Variance}).
@@ -142,6 +145,7 @@ generate_model(Options) ->
     Variance = get_opt(variance, fun illegal/0, Options),
     Class = get_opt(class_index, fun illegal/0, Options),
     _Ignore = get_opt(ignore_index, fun illegal/0, Options),
+    Unique = get_opt(unique, fun illegal/0, Options),
     
     Outputs = try 
 		  merge_opts(get_opts([output_model, output_index, output_reduced], Options), 
@@ -163,7 +167,7 @@ generate_model(Options) ->
 	      [Window, Length, Prob, Variance]),
 
     Then = now(),    
-    Result = run(InputFile, Cores, Window, Length, Prob, Variance, Class),
+    Result = run(InputFile, Cores, Window, Length, Prob, Variance, Class, Unique),
     io:format(standard_error, "*** Calculated ~p semantic vectors in ~p second(s)*** ~n", 
 	      [dict:size(Result), timer:now_diff(now(), Then) / 1000000]),
 

@@ -27,4 +27,9 @@
 %% ignore: ignore items with id 
 %% class: treat index as class 
 %%
--record(ri_conf, {file, window, cores, ignore, class}).
+-record(ri_conf, {file, 
+		  window, 
+		  cores, 
+		  ignore, 
+		  class,
+		  unique}).

@@ -14,18 +14,26 @@ vector_update_process(Parent, RiConf, IndexVector) ->
     random:seed(erlang:now()),
     vector_update_process(Parent, RiConf, IndexVector, dict:new()).
 
-vector_update_process(Parent, #ri_conf{file=Io, window=Window, class=ClassIdx} = RiConf, IndexVector, Result) ->
+vector_update_process(Parent, #ri_conf{file=Io, 
+				       window=Window, 
+				       class=ClassIdx,
+				       unique=Unique} = RiConf, IndexVector, Result) ->
     case csv:get_next_line(Io) of
 	{ok, Item, Line} ->
 	    Result0 = case Window of
 			  X when is_number(X) ->
 			      update_item(Result, Item, Window, IndexVector);
 			  reduce ->
+			      Item0 = if Unique ->
+					      ri_util:unique_keep_order(Item);
+					 true ->
+					      Item
+				      end,
 			      case ClassIdx of
 				  undefined -> %% unsupervised?
-				      update_all(Result, Item, IndexVector, Line);
+				      update_all(Result, Item0, IndexVector, Line);
 				  _ ->
-				      {Class, Rest} = ri_util:take_nth(Item, ClassIdx),
+				      {Class, Rest} = ri_util:take_nth(Item0, ClassIdx),
 				      update_all_class(Result, Rest, IndexVector, Line, Class)
 			      end;
 			  item ->
