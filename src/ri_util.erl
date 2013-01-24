@@ -26,6 +26,8 @@ unique_keep_order(List, Seen, Acc) ->
 %%
 %% Remove item on N
 %%
+take_nth([A|R], 1) ->
+    {A, R};
 take_nth(List, N) ->
     {L1, [Item|L2]} = lists:split(N-1, List),
     {Item, L1 ++ L2}.

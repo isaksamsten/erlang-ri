@@ -110,7 +110,8 @@ update_item(Result, [Pivot|Rest], Window, IndexVector, Queue) ->
 							false ->
 							    queue:in(Pivot, Queue)
 						    end).
-
+update_all_class(Result, [], #index_vector{length=L}, Pivot, Class) ->
+    dict:store(Pivot, ri_vector:new_semantic_vector(Class, L), Result);
 update_all_class(Result, Items, IndexVector, Pivot, Class) ->
     lists:foldl(fun (Item, Result0) ->
 			update_pivot(Result0, Pivot, Item, IndexVector, Class)
