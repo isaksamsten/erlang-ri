@@ -73,7 +73,7 @@ write_reduced_to_file(File, Length, Result) ->
 	     {ok, Io0} -> Io0;
 	     error -> throw({error, file_not_found})
 	 end,
-
+    
     file:write(Io, io_lib:format("~s,", [string:join(
 					   [io_lib:format("~p", [S]) || S <- lists:seq(1, Length)], ",")])),
     
@@ -82,13 +82,13 @@ write_reduced_to_file(File, Length, Result) ->
 		      Values = lists:map(fun(Index) ->
 						 case dict:find(Index, Vector) of
 						     {ok, Value} ->
-							 io_lib:format("~p", [Value]);
+							 integer_to_list(Value);
 						     error ->
 							 "0"
 						 end
 					 end, lists:seq(1, Length)),
-		      file:write(Io, io_lib:format("~s,", [string:join(Values, ",")])),
-		      file:write(Io, io_lib:format("~s~n", [Class]))
+		      io:format("Writing doc: ~p ~p ~p ~n", [Doc, Class, length(Values)]),
+		      file:write(Io, io_lib:format("~s,~s~n", [string:join(Values, ","), Class]))
 	      end, [], Result),
     file:close(Io).
 		      
