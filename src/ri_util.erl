@@ -87,7 +87,6 @@ write_reduced_to_file(File, Length, Result) ->
 							 "0"
 						 end
 					 end, lists:seq(1, Length)),
-		      io:format("Writing doc: ~p ~p ~p ~n", [Doc, Class, length(Values)]),
 		      file:write(Io, io_lib:format("~s,~s~n", [string:join(Values, ","), Class]))
 	      end, [], Result),
     file:close(Io).
