@@ -7,9 +7,7 @@
 %% Init a random vector of Length lenght and the Prob prob to
 %% spawn -1 or 1
 %%
-get_index_vector(Item, #index_vector{length=Length,
-				     prob=Prob,
-				     variance=Variance}) ->	    
+get_index_vector(Item, Length, Prob, Variance) ->	    
     case ets:lookup(index_vectors, Item) of
 	[{_, Vector}] ->
 	    Vector;
@@ -18,6 +16,27 @@ get_index_vector(Item, #index_vector{length=Length,
 	    ets:insert(index_vectors, {Item, Vector}),
 	    Vector
     end.
+
+get_index_vector(Item, #index_vector{pid=Pid}) ->
+    Self = self(),
+    Pid ! {get, Self, Item},
+    receive
+	{get, Pid, IndexVector} ->
+	    IndexVector
+    end.
+
+index_vector_handler(Length, Prob, Variance) ->
+    spawn_link(fun() ->
+		       index_vector_process(Length, Prob, Variance)
+	       end).
+
+index_vector_process(Length, Prob, Variance) ->
+    receive
+	{get, Pid, Item} ->
+	    Pid ! {get, self(), get_index_vector(Item, Length, Prob, Variance)},
+	    index_vector_process(Length, Prob, Variance)
+    end.
+	    
 
 %%
 %% Merge two collections of semantic vectors

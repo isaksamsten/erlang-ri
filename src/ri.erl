@@ -91,7 +91,8 @@ run_experiment(Io, Cores, Window, Length, Prob, Variance, Class, Unique) ->
 						     unique=Unique},
 					    #index_vector{length=Length, 
 							  prob=Prob, 
-							  variance=Variance}).
+							  variance=Variance,
+							  pid=ri_vector:index_vector_handler(Length, Prob, Variance)}).
 
 %%
 %% Halts the program if illegal arguments are supplied

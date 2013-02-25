@@ -5,7 +5,7 @@
 %% prob:     the number of non-zero bits
 %% variance: the variance in number of non-zero bits
 %%
--record(index_vector, {length, prob, variance}).
+-record(index_vector, {length, prob, variance, pid}).
 
 %%
 %% Record for storing information regarding the length and contents
