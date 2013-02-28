@@ -1,7 +1,7 @@
 -module(ri_util).
 -include("ri.hrl").
 -export([write_model_to_file/3,
-	 write_reduced_to_file/3,
+	 write_reduced_to_file/4,
 	 write_index_to_file/1,
 	 get_semantic_vector/2,
 	 take_nth/2,
@@ -68,12 +68,18 @@ write_model_to_file(File, Length, Result) ->
 	      end, [], Result),
     file:close(Io).
 
-write_reduced_to_file(File, Length, Result) ->
+write_reduced_to_file(File, Length, Result, Rds) ->
     Io = case file:open(File, [raw, write]) of
 	     {ok, Io0} -> Io0;
 	     error -> throw({error, file_not_found})
 	 end,
-    
+
+    if Rds == true ->
+	    file:write(Io, io_lib:format("~s,", [string:join(
+						   ["numeric" || _ <- lists:seq(1, Length)], ",")])),
+	    file:write(Io, "class\n");
+       true -> ok
+    end,
     file:write(Io, io_lib:format("~s,", [string:join(
 					   [io_lib:format("~p", [S]) || S <- lists:seq(1, Length)], ",")])),
     

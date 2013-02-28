@@ -1,10 +1,10 @@
 -module(ri).
 -export([main/1]).
 
--define(DATA, "2013-01-07").
--define(MAJOR_VERSION, 0).
--define(MINOR_VERSION, 1).
--define(REVISION, 'beta-3').
+-define(DATE, "2013-02-28").
+-define(MAJOR_VERSION, "1").
+-define(MINOR_VERSION, "0").
+-define(REVISION, "0").
 
 -define(AUTHOR, "Isak Karlsson <isak-kar@dsv.su.se>").
 
@@ -65,6 +65,8 @@ cmd_spec() ->
       "Length of the index vector"},
      {prob,           $p,          undefined, {integer, 7},
       "Number of non-negative bits in index vector"},
+     {rds,            undefined,   "rds",     {boolean, false},
+      "Generate a RDS-header when using --reduce and --dataset"},
      {variance,       $v,          undefined, {integer, 0},
       "Variance in the number of non-negative bits."},
      {output,         $o,          "output",  string,
@@ -175,7 +177,7 @@ generate_model(Options) ->
     Then0 = now(),
     case length(Outputs) of
 	X when X > 0 -> 
-	    write_models(Outputs, Length, Result),
+	    write_models(Outputs, Length, Result, Options),
 	    io:format(standard_error, "*** Wrote ~p models in ~p second(s)*** ~n", 
 		      [X, timer:now_diff(now(), Then0) / 1000000]);
 	_ -> ok
@@ -184,7 +186,7 @@ generate_model(Options) ->
 
 
 
-write_models(Models, Length, Result) ->
+write_models(Models, Length, Result, Options) ->
     Self = self(),
     lists:foreach(fun ({output_model, File}) ->
 			  io:format(standard_error, "*** Writing model to '~s' *** ~n", [File]),
@@ -201,7 +203,7 @@ write_models(Models, Length, Result) ->
 		      ({output_reduced, File}) ->
 			  io:format(standard_error, "*** Writing reduced model to '~s' *** ~n", [File]),
 			  spawn_link(fun() ->
-					     ri_util:write_reduced_to_file(File, Length, Result),
+					     ri_util:write_reduced_to_file(File, Length, Result, get_opt(rds, fun illegal/0, Options)),
 					     Self ! done
 				     end)
 		  end, Models),
@@ -254,5 +256,8 @@ merge_opts(Matches, Key, {Options, _}) ->
 						 end, [], Options))).
 
 show_information() -> 
-    io_lib:format("Random index, Version (of ~s) ~p.~p.~s ~nAll rights reserved ~s", 
-		  [?DATA, ?MAJOR_VERSION, ?MINOR_VERSION, ?REVISION, ?AUTHOR]).
+    io_lib:format("ri (Random Index) ~s.~s.~s (build date: ~s)
+Copyright (C) 2013+ ~s
+
+Written by ~s ~n", [?MAJOR_VERSION, ?MINOR_VERSION, ?REVISION, ?DATE,
+		  ?AUTHOR, ?AUTHOR]).
