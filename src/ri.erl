@@ -53,10 +53,12 @@ cmd_spec() ->
       "Show this text"},
      {version,        undefined,   "version", undefined,
       "Show the application version"},
-     {window,         $w,          "window",  {integer, 2},
+     {window,         $w,          "window-size",  {integer, 2},
       "Set the size of the sliding window"},
      {reduce,         $r,          "reduce",  undefined,
       "Use the items as the index vector for the document"},
+     {before,         undefined,   "before",  undefined,
+      "The sliding window only investigates items before pivot"},
      {item,           undefined,   "item",    undefined,
       "Use the document as index vector for each item"},
      {cores,          $c,          "cores",   {integer, erlang:system_info(schedulers)},
@@ -135,12 +137,11 @@ load_model(Options) ->
 
 generate_model(Options) ->
     InputFile = get_opt(input_file, fun illegal/0, Options),
-    Window = case has_opt(reduce, Options) of
-		 true -> reduce;
-		 false -> case  has_opt(item, Options) of
-			      true -> item;
-			      false -> get_opt(window, fun illegal/0, Options)
-			  end
+    Window = case any_opt([reduce,before, item], Options) of
+		 reduce -> reduce;
+		 item -> item;
+		 before -> {before, get_opt(window, fun illegal/0, Options)};
+		 false -> {window, get_opt(window, fun illegal/0, Options)}
 	     end,
     Cores = get_opt(cores, fun illegal/0, Options),
     Length = get_opt(length, fun illegal/0, Options),
@@ -254,6 +255,17 @@ merge_opts(Matches, Key, {Options, _}) ->
 							     _ -> Acc
 							 end
 						 end, [], Options))).
+
+any_opt([], _) ->
+    false;
+any_opt([O|Rest], Options) ->
+    case has_opt(O, Options) of
+	true ->
+	    O;
+	false ->
+	    any_opt(Rest, Options)
+    end.
+
 
 show_information() -> 
     io_lib:format("ri (Random Index) ~s.~s.~s (build date: ~s)

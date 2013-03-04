@@ -21,8 +21,10 @@ vector_update_process(Parent, #ri_conf{file=Io,
     case csv:get_next_line(Io) of
 	{ok, Item, Line} ->
 	    Result0 = case Window of
-			  X when is_number(X) ->
-			      update_item(Result, Item, Window, IndexVector);
+			  {window, WindowSize} ->
+			      update_item(Result, Item, WindowSize, IndexVector);
+			  {before, WindowSize} ->
+			      update_item_before(Result, Item, WindowSize, IndexVector);
 			  reduce ->
 			      Item0 = if Unique ->
 					      ri_util:unique_keep_order(Item);
@@ -110,12 +112,30 @@ update_item(Result, [Pivot|Rest], Window, IndexVector, Queue) ->
 							false ->
 							    queue:in(Pivot, Queue)
 						    end).
+
+update_item_before(Result, Items, Window, IndexVector) ->
+    update_item_before(Result, Items, Window, IndexVector, queue:new()).
+
+update_item_before(Result, [], _Conf, _Iv, _Q) ->
+    Result;
+update_item_before(Result, [Pivot|Rest], Window, IndexVector, Queue) ->
+    Result1 = update_all(Result, queue:to_list(Queue), IndexVector, Pivot),
+    update_item_before(Result1, Rest, Window, IndexVector, case queue:len(Queue) >= Window of
+							       true->
+								   {_, Old} = queue:out(Queue),
+								   queue:in(Pivot, Old);
+							       false ->
+								   queue:in(Pivot, Queue)
+							   end).
+
+
 update_all_class(Result, [], #index_vector{length=L}, Pivot, Class) ->
     dict:store(Pivot, ri_vector:new_semantic_vector(Class, L), Result);
 update_all_class(Result, Items, IndexVector, Pivot, Class) ->
     lists:foldl(fun (Item, Result0) ->
 			update_pivot(Result0, Pivot, Item, IndexVector, Class)
 		end, Result, Items).
+
 
 %%
 %% Update Pivot with all items in Items

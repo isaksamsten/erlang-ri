@@ -50,6 +50,9 @@ execute(["to", Word, Min], R) ->
     lists:foreach(fun ({Cmp, Sim}) ->
 			  io:format("~s\t~p ~n", [Cmp, Sim])
 		  end, SimilarTo);
+execute(["to", Word, "min-length", Length], R) ->
+    SimilarTo = ri_simiarlity:to(Word, fun(Item, _Sim) -> length(Item) > Length end, R),
+    io:format("~p~n", [SimilarTo]); %% NOTE:Error undef
 execute(["halt"], _) ->
     halt().
 
